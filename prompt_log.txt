@@ -3,4 +3,8 @@ Model: Gemini Pro
 1. im thinking 2d top down, maybe like zombsroyale style, but just ffa arena instead of battle royale. with zombie npcs to make it playable singleplayer
 2. be realistic, would that free render backend have very long delays
 3. ok could you implement this? tell me what files to create and what code to paste
-4. 
+4. its been saying starting server on port 8000 for a while now
+5. ok its working, theres zombies, i can see the other player, and zombies can be hit by bullets and die
+6. can you make the game look better, maybe a green grass background, some obstacles in the arena, a bigger arena
+7. canvas is not defined, unsafe attempt to load url
+8. 
