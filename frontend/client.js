@@ -188,9 +188,10 @@ function draw() {
     // --- CAMERA WORLD RESTORE (Back to fixed screen coordinates) ---
     ctx.restore(); 
 
-    // --- NEW: HUD / UI LAYER (Static in bottom-left) ---
+// --- NEW: HUD / UI LAYER (Static in bottom-left) ---
     const hudX = 20;
-    const hudY = canvas.height - 100;
+    // Shifted from -100 to -140 to bring everything up higher
+    const hudY = canvas.height - 140; 
 
     // 1. Health Bar
     const healthBarWidth = 200;
@@ -213,11 +214,12 @@ function draw() {
     // 2. Item Slots (5 empty squares)
     const slotSize = 40;
     const slotSpacing = 10;
-    const itemsY = hudY + healthBarHeight + 15;
+    // Items draw just below the health bar
+    const itemsY = hudY + healthBarHeight + 15; 
 
     ctx.strokeStyle = '#FFF';
     ctx.lineWidth = 2;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; // semi-transparent background for slots
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; 
 
     for (let i = 0; i < 5; i++) {
         let x = hudX + (slotSize + slotSpacing) * i;

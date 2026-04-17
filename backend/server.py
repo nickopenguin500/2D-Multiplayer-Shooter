@@ -18,14 +18,25 @@ state = {
 }
 connected_clients = set()
 
-# Generate random trees
+# Generate random trees with a safe zone in the middle
 for _ in range(30):
-    state["trees"].append({
-        "x": random.uniform(100, ARENA_SIZE - 100),
-        "y": random.uniform(100, ARENA_SIZE - 100),
-        "radius": random.uniform(30, 60)
-    })
-
+    while True:
+        tx = random.uniform(100, ARENA_SIZE - 100)
+        ty = random.uniform(100, ARENA_SIZE - 100)
+        tradius = random.uniform(30, 60)
+        
+        # Calculate distance from this tree to the exact center of the map
+        dist_to_center = math.hypot(tx - (ARENA_SIZE / 2), ty - (ARENA_SIZE / 2))
+        
+        # If the tree is more than 150 pixels away from the center, keep it!
+        if dist_to_center > tradius + 150:
+            state["trees"].append({
+                "x": tx,
+                "y": ty,
+                "radius": tradius
+            })
+            break # Break out of the while loop and move to the next tree
+        
 # Game loop functions
 async def game_loop():
     while True:
