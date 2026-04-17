@@ -14,7 +14,7 @@ state = {
     "bullets": [],
     "zombies": [],
     "trees": [],
-    "damage_indicators": [] # NEW: Track floating damage text
+    "damage_indicators": [] 
 }
 connected_clients = set()
 
@@ -33,10 +33,8 @@ async def game_loop():
     while True:
         current_time = time.time()
         
-        # Cleanup expired damage indicators
         state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
 
-        # 1. Move Bullets
         for b in state["bullets"][:]:
             b["x"] += b["vx"]
             b["y"] += b["vy"]
@@ -49,7 +47,6 @@ async def game_loop():
             if not hit_something and not (0 <= b["x"] <= ARENA_SIZE and 0 <= b["y"] <= ARENA_SIZE):
                 if b in state["bullets"]: state["bullets"].remove(b)
 
-        # 2. Move Zombies & Check Collisions
         player_ids = list(state["players"].keys())
         for z in state["zombies"][:]:
             if player_ids:
@@ -66,18 +63,13 @@ async def game_loop():
                     if math.hypot(z["x"] - t["x"], z["y"] - t["y"]) < z["radius"] + t["radius"]:
                         z["x"], z["y"] = old_x, old_y 
 
-            # Zombie vs Player (SHIELD LOGIC)
             for pid, p in state["players"].items():
                 if math.hypot(z["x"] - p["x"], z["y"] - p["y"]) < z["radius"] + p["radius"]:
                     if current_time > p["iframeUntil"]:
                         damage_taken = 10
-                        
-                        # Register Damage Indicator
                         state["damage_indicators"].append({
                             "x": p["x"], "y": p["y"], "dmg": damage_taken, "expires": current_time + 0.5, "color": "#e74c3c"
                         })
-                        
-                        # Apply to shields first
                         if p["shields"] >= damage_taken:
                             p["shields"] -= damage_taken
                         else:
@@ -88,20 +80,16 @@ async def game_loop():
                         p["iframeUntil"] = current_time + 1.0 
                         if p["health"] <= 0:
                             p["health"] = 100
-                            p["shields"] = 50 # Respawn with some shields for testing
+                            p["shields"] = 50 
                             p["x"], p["y"] = ARENA_SIZE / 2, ARENA_SIZE / 2
                             p["score"] = 0 
 
-            # Bullet vs Zombie (DAMAGE INDICATORS)
             for b in state["bullets"][:]:
                 if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
                     z["health"] -= b["damage"] 
-                    
-                    # Add floating damage number
                     state["damage_indicators"].append({
                         "x": z["x"], "y": z["y"], "dmg": b["damage"], "expires": current_time + 0.5, "color": "#FFF"
                     })
-                    
                     if b in state["bullets"]: state["bullets"].remove(b) 
                     if z["health"] <= 0: 
                         if z in state["zombies"]: state["zombies"].remove(z)
@@ -131,8 +119,9 @@ async def handler(websocket):
     state["players"][client_id] = {
         "x": ARENA_SIZE / 2, "y": ARENA_SIZE / 2,
         "radius": 15, "color": f"hsl({random.randint(0, 360)}, 100%, 50%)", "score": 0,
-        "health": 100, "shields": 50, # Start with 50 shield
-        "iframeUntil": 0, "aimAngle": 0, "currentWeapon": "pistol"
+        "health": 100, "shields": 50, 
+        "iframeUntil": 0, "aimAngle": 0, 
+        "currentWeapon": "fists" # NEW: Spawn with fists
     }
     
     await websocket.send(json.dumps({"type": "init", "id": client_id}))
@@ -144,9 +133,12 @@ async def handler(websocket):
                 p = state["players"][client_id]
                 old_x, old_y = p["x"], p["y"]
                 p["aimAngle"] = data["aimAngle"] 
-                p["currentWeapon"] = data.get("weapon", "pistol") # Update weapon for all to see
+                p["currentWeapon"] = data.get("weapon", "fists") 
                 
-                speed = 6 
+                # NEW: Speed Modifier Logic!
+                # 6.0 is base speed. 6.0 * 1.3 = 7.8 (30% faster)
+                speed = 7.8 if p["currentWeapon"] == "fists" else 6.0
+                
                 if data["up"]: p["y"] -= speed
                 if data["down"]: p["y"] += speed
                 if data["left"]: p["x"] -= speed
@@ -162,6 +154,7 @@ async def handler(websocket):
                 weapon = data["weapon"]
                 p = state["players"][client_id]
                 
+                # Notice we just ignore "fists" here so clicking does nothing/doesn't spawn bullets
                 if weapon == "pistol":
                     state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 15, "vy": math.sin(angle) * 15, "ownerId": client_id, "radius": 5, "damage": 10})
                 elif weapon == "ar":
@@ -169,8 +162,8 @@ async def handler(websocket):
                 elif weapon == "shotgun":
                     for _ in range(5):
                         spread_angle = angle + random.uniform(-0.25, 0.25)
-                        speed = random.uniform(12, 16)
-                        state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(spread_angle) * speed, "vy": math.sin(spread_angle) * speed, "ownerId": client_id, "radius": 3, "damage": 6})
+                        bullet_speed = random.uniform(12, 16)
+                        state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(spread_angle) * bullet_speed, "vy": math.sin(spread_angle) * bullet_speed, "ownerId": client_id, "radius": 3, "damage": 6})
                 elif weapon == "sniper":
                     state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 35, "vy": math.sin(angle) * 35, "ownerId": client_id, "radius": 8, "damage": 50})
     except websockets.exceptions.ConnectionClosed:

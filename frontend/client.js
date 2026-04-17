@@ -11,13 +11,15 @@ let myId = null;
 let serverTime = 0; 
 let mouseX = 0, mouseY = 0; 
 
-const WEAPONS = ['pistol', 'ar', 'shotgun', 'sniper'];
-const WEAPON_NAMES = ['Pistol', 'AR', 'Shotgun', 'Sniper'];
-let currentWeaponIndex = 0; 
+// NEW: Shifted inventory
+const WEAPONS = ['fists', 'pistol', 'ar', 'shotgun', 'sniper'];
+const WEAPON_NAMES = ['Fists', 'Pistol', 'AR', 'Shotgun', 'Sniper'];
+let currentWeaponIndex = 0; // Starts at 0 (Fists)
 
 let isMouseDown = false;
 let lastShotTime = 0;
-const FIRE_RATES = { pistol: 300, ar: 100, shotgun: 800, sniper: 1500 };
+// Added a placeholder fire rate for fists just so the loop doesn't break
+const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 1500 };
 
 const socket = new WebSocket('ws://localhost:8000');
 socket.onopen = () => { loadingOverlay.classList.add('hidden'); };
@@ -36,10 +38,13 @@ window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (k === 'w') movement.up = true; if (k === 'a') movement.left = true;
     if (k === 's') movement.down = true; if (k === 'd') movement.right = true;
+    
+    // NEW: Added the '5' key
     if (k === '1') currentWeaponIndex = 0;
     if (k === '2') currentWeaponIndex = 1;
     if (k === '3') currentWeaponIndex = 2;
     if (k === '4') currentWeaponIndex = 3;
+    if (k === '5') currentWeaponIndex = 4;
 });
 window.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
@@ -56,7 +61,6 @@ canvas.addEventListener('mousemove', (e) => {
 canvas.addEventListener('mousedown', () => isMouseDown = true);
 window.addEventListener('mouseup', () => isMouseDown = false); 
 
-// Send inputs to server (Now includes selected weapon!)
 setInterval(() => {
     if (socket.readyState === WebSocket.OPEN && currentState.players[myId]) {
         const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
@@ -64,7 +68,6 @@ setInterval(() => {
     }
 }, 1000 / 30);
 
-// Shooting loop
 setInterval(() => {
     if (isMouseDown && socket.readyState === WebSocket.OPEN && currentState.players[myId]) {
         const now = Date.now();
@@ -78,21 +81,20 @@ setInterval(() => {
     }
 }, 1000 / 60);
 
-// --- UPDATED DRAW FACE: Now with dynamic weapon rendering ---
 function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = null) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
 
-    // Draw Weapon FIRST so it's under the character's body
-    if (weaponType) {
-        ctx.fillStyle = '#333'; // Default dark grey
+    // Draw Guns (Rendered under the body)
+    if (weaponType && weaponType !== 'fists') {
+        ctx.fillStyle = '#333'; 
         if (weaponType === 'pistol') {
             ctx.fillRect(radius - 5, 2, 12, 6);
         } else if (weaponType === 'ar') {
             ctx.fillRect(radius - 5, 2, 22, 6);
         } else if (weaponType === 'shotgun') {
-            ctx.fillStyle = '#111'; // Darker
+            ctx.fillStyle = '#111'; 
             ctx.fillRect(radius - 5, 1, 16, 8);
         } else if (weaponType === 'sniper') {
             ctx.fillStyle = '#111';
@@ -103,6 +105,19 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
     // Body
     ctx.fillStyle = colorMain;
     ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
+
+    // NEW: Draw Fists (Rendered over the body)
+    if (weaponType === 'fists') {
+        ctx.fillStyle = colorMain;
+        
+        // Left fist (angled slightly out and forward)
+        ctx.beginPath(); ctx.arc(radius * 0.6, -radius * 0.8, radius * 0.4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+        
+        // Right fist
+        ctx.beginPath(); ctx.arc(radius * 0.6, radius * 0.8, radius * 0.4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+    }
 
     // Eyes
     const eyeRadius = radius * 0.3;
@@ -127,7 +142,6 @@ function draw() {
     ctx.save();
     ctx.translate(canvas.width / 2 - myPlayer.x, canvas.height / 2 - myPlayer.y);
 
-    // Background & Environment
     ctx.fillStyle = '#4CAF50'; ctx.fillRect(0, 0, 2000, 2000); 
     ctx.strokeStyle = '#388E3C'; ctx.lineWidth = 2;
     for (let i = 0; i <= 2000; i += 100) {
@@ -159,7 +173,6 @@ function draw() {
             drawColor = p.color.replace('hsl', 'hsla').replace(')', `, ${flickerAlpha})`);
         }
 
-        // Pass the player's current weapon to draw it!
         drawFace(p.x, p.y, p.radius, p.aimAngle, drawColor, '#FFFFFF', p.currentWeapon);
         
         if (id === myId) {
@@ -168,18 +181,14 @@ function draw() {
         }
     }
 
-    // --- DRAW DAMAGE INDICATORS ---
     if (currentState.damage_indicators) {
         ctx.font = 'bold 18px sans-serif';
         currentState.damage_indicators.forEach(d => {
-            // Calculate how far along it is in its 0.5s lifespan to drift it upwards
             let lifeTimeLeft = d.expires - serverTime;
             let driftY = d.y - ((0.5 - lifeTimeLeft) * 40); 
-            
             ctx.fillStyle = d.color;
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 3;
-            
             ctx.strokeText(d.dmg, d.x - 5, driftY);
             ctx.fillText(d.dmg, d.x - 5, driftY);
         });
@@ -189,19 +198,17 @@ function draw() {
 
     // --- HUD LAYER ---
     const hudX = 20;
-    const hudY = canvas.height - 180; // Shifted up to fit shields
+    const hudY = canvas.height - 180; 
 
-    // 1. Shields Bar (NEW)
     const barWidth = 200;
     const barHeight = 25;
     ctx.fillStyle = '#444'; ctx.fillRect(hudX, hudY, barWidth, barHeight);
-    ctx.fillStyle = '#3498db'; // Fortnite Blue
+    ctx.fillStyle = '#3498db'; 
     let shieldPercent = myPlayer.shields / 100;
     ctx.fillRect(hudX, hudY, barWidth * shieldPercent, barHeight);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'left';
     ctx.fillText(`${myPlayer.shields} / 100 SHIELD`, hudX + 10, hudY + 18);
 
-    // 2. Health Bar (Shifted down)
     const healthY = hudY + barHeight + 5;
     ctx.fillStyle = '#444'; ctx.fillRect(hudX, healthY, barWidth, barHeight);
     ctx.fillStyle = '#e74c3c';
@@ -210,7 +217,6 @@ function draw() {
     ctx.fillStyle = '#FFF'; 
     ctx.fillText(`${myPlayer.health} / 100 HP`, hudX + 10, healthY + 18);
 
-    // 3. Weapon Slots
     const slotSize = 40;
     const slotSpacing = 10;
     const itemsY = healthY + barHeight + 15; 
