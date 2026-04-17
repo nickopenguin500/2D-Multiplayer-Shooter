@@ -5,41 +5,37 @@ import math
 import random
 import uuid
 import os
-import time # New import for tracking i-frames
+import time
 
 ARENA_SIZE = 2000
 
-# Game State
 state = {
     "players": {},
     "bullets": [],
     "zombies": [],
-    "trees": [] 
+    "trees": [],
+    "damage_indicators": [] # NEW: Track floating damage text
 }
 connected_clients = set()
 
-# Generate random trees with a safe zone in the middle
+# Generate random trees
 for _ in range(30):
     while True:
         tx = random.uniform(100, ARENA_SIZE - 100)
         ty = random.uniform(100, ARENA_SIZE - 100)
         tradius = random.uniform(30, 60)
-        
-        # Calculate distance from this tree to the exact center of the map
         dist_to_center = math.hypot(tx - (ARENA_SIZE / 2), ty - (ARENA_SIZE / 2))
-        
-        # If the tree is more than 150 pixels away from the center, keep it!
         if dist_to_center > tradius + 150:
-            state["trees"].append({
-                "x": tx,
-                "y": ty,
-                "radius": tradius
-            })
-            break # Break out of the while loop and move to the next tree
-        
-# Game loop functions
+            state["trees"].append({"x": tx, "y": ty, "radius": tradius})
+            break 
+
 async def game_loop():
     while True:
+        current_time = time.time()
+        
+        # Cleanup expired damage indicators
+        state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
+
         # 1. Move Bullets
         for b in state["bullets"][:]:
             b["x"] += b["vx"]
@@ -54,15 +50,13 @@ async def game_loop():
                 if b in state["bullets"]: state["bullets"].remove(b)
 
         # 2. Move Zombies & Check Collisions
-        current_time = time.time()
         player_ids = list(state["players"].keys())
         for z in state["zombies"][:]:
-            target_p = None
             if player_ids:
                 nearest_id = min(player_ids, key=lambda pid: math.hypot(state["players"][pid]["x"] - z["x"], state["players"][pid]["y"] - z["y"]))
                 target_p = state["players"][nearest_id]
                 angle = math.atan2(target_p["y"] - z["y"], target_p["x"] - z["x"])
-                z["angle"] = angle # Save angle for drawing eyes
+                z["angle"] = angle
                 
                 old_x, old_y = z["x"], z["y"]
                 z["x"] += math.cos(angle) * z["speed"]
@@ -72,65 +66,73 @@ async def game_loop():
                     if math.hypot(z["x"] - t["x"], z["y"] - t["y"]) < z["radius"] + t["radius"]:
                         z["x"], z["y"] = old_x, old_y 
 
-            # NEW: Zombie vs Player Damage logic
+            # Zombie vs Player (SHIELD LOGIC)
             for pid, p in state["players"].items():
                 if math.hypot(z["x"] - p["x"], z["y"] - p["y"]) < z["radius"] + p["radius"]:
-                    # Check if player is invincible
                     if current_time > p["iframeUntil"]:
-                        p["health"] -= 10 # Take 10 damage
-                        p["iframeUntil"] = current_time + 1.0 # 1 second of i-frames
+                        damage_taken = 10
                         
-                        # Kill player logic
+                        # Register Damage Indicator
+                        state["damage_indicators"].append({
+                            "x": p["x"], "y": p["y"], "dmg": damage_taken, "expires": current_time + 0.5, "color": "#e74c3c"
+                        })
+                        
+                        # Apply to shields first
+                        if p["shields"] >= damage_taken:
+                            p["shields"] -= damage_taken
+                        else:
+                            overflow = damage_taken - p["shields"]
+                            p["shields"] = 0
+                            p["health"] -= overflow
+                            
+                        p["iframeUntil"] = current_time + 1.0 
                         if p["health"] <= 0:
-                            print(f"Player {pid} died.")
                             p["health"] = 100
-                            p["x"] = ARENA_SIZE / 2
-                            p["y"] = ARENA_SIZE / 2
-                            p["score"] = 0 # Reset score or handle death differently
+                            p["shields"] = 50 # Respawn with some shields for testing
+                            p["x"], p["y"] = ARENA_SIZE / 2, ARENA_SIZE / 2
+                            p["score"] = 0 
 
-            # Bullet vs Zombie
+            # Bullet vs Zombie (DAMAGE INDICATORS)
             for b in state["bullets"][:]:
                 if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
-                    if z in state["zombies"]: state["zombies"].remove(z)
-                    if b in state["bullets"]: state["bullets"].remove(b)
-                    if b["ownerId"] in state["players"]:
-                        state["players"][b["ownerId"]]["score"] += 10
-                    break
+                    z["health"] -= b["damage"] 
+                    
+                    # Add floating damage number
+                    state["damage_indicators"].append({
+                        "x": z["x"], "y": z["y"], "dmg": b["damage"], "expires": current_time + 0.5, "color": "#FFF"
+                    })
+                    
+                    if b in state["bullets"]: state["bullets"].remove(b) 
+                    if z["health"] <= 0: 
+                        if z in state["zombies"]: state["zombies"].remove(z)
+                        if b["ownerId"] in state["players"]:
+                            state["players"][b["ownerId"]]["score"] += 10
+                    break 
 
-        # Broadcast state
         if connected_clients:
             message = json.dumps({"type": "state", "data": state, "time": current_time})
             websockets.broadcast(connected_clients, message)
         
         await asyncio.sleep(1/30)
 
-# The Zombie Spawner (Make sure this task is running!)
 async def spawner():
-    print("Spawner started.")
     while True:
-        # Spawn if less than 15 zombies
         if len(state["zombies"]) < 15: 
             state["zombies"].append({
-                "x": 0 if random.random() < 0.5 else ARENA_SIZE,
-                "y": random.uniform(0, ARENA_SIZE),
-                "radius": 15,
-                "speed": random.uniform(1.5, 3.0), # Varied speed
-                "angle": 0 # Default angle
+                "x": 0 if random.random() < 0.5 else ARENA_SIZE, "y": random.uniform(0, ARENA_SIZE),
+                "radius": 15, "speed": random.uniform(1.5, 3.0), "angle": 0, "health": 30
             })
-        await asyncio.sleep(3) # Spawn check every 3 seconds
+        await asyncio.sleep(3)
 
 async def handler(websocket):
     client_id = str(uuid.uuid4())
     connected_clients.add(websocket)
-    print(f"Player connected: {client_id}")
     
-    # NEW: Player State (health, iframeUntil, aimAngle)
     state["players"][client_id] = {
         "x": ARENA_SIZE / 2, "y": ARENA_SIZE / 2,
         "radius": 15, "color": f"hsl({random.randint(0, 360)}, 100%, 50%)", "score": 0,
-        "health": 100,
-        "iframeUntil": 0,
-        "aimAngle": 0
+        "health": 100, "shields": 50, # Start with 50 shield
+        "iframeUntil": 0, "aimAngle": 0, "currentWeapon": "pistol"
     }
     
     await websocket.send(json.dumps({"type": "init", "id": client_id}))
@@ -141,7 +143,9 @@ async def handler(websocket):
             if data["type"] == "move":
                 p = state["players"][client_id]
                 old_x, old_y = p["x"], p["y"]
-                p["aimAngle"] = data["aimAngle"] # Save aiming angle from client
+                p["aimAngle"] = data["aimAngle"] 
+                p["currentWeapon"] = data.get("weapon", "pistol") # Update weapon for all to see
+                
                 speed = 6 
                 if data["up"]: p["y"] -= speed
                 if data["down"]: p["y"] += speed
@@ -152,27 +156,34 @@ async def handler(websocket):
                 for t in state["trees"]:
                     if math.hypot(p["x"] - t["x"], p["y"] - t["y"]) < p["radius"] + t["radius"]:
                         p["x"], p["y"] = old_x, old_y 
+            
             elif data["type"] == "shoot":
                 angle = data["angle"]
+                weapon = data["weapon"]
                 p = state["players"][client_id]
-                state["bullets"].append({
-                    "x": p["x"], "y": p["y"],
-                    "vx": math.cos(angle) * 15, "vy": math.sin(angle) * 15, 
-                    "ownerId": client_id, "radius": 5
-                })
+                
+                if weapon == "pistol":
+                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 15, "vy": math.sin(angle) * 15, "ownerId": client_id, "radius": 5, "damage": 10})
+                elif weapon == "ar":
+                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 18, "vy": math.sin(angle) * 18, "ownerId": client_id, "radius": 4, "damage": 5})
+                elif weapon == "shotgun":
+                    for _ in range(5):
+                        spread_angle = angle + random.uniform(-0.25, 0.25)
+                        speed = random.uniform(12, 16)
+                        state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(spread_angle) * speed, "vy": math.sin(spread_angle) * speed, "ownerId": client_id, "radius": 3, "damage": 6})
+                elif weapon == "sniper":
+                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 35, "vy": math.sin(angle) * 35, "ownerId": client_id, "radius": 8, "damage": 50})
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
         connected_clients.remove(websocket)
         if client_id in state["players"]: del state["players"][client_id]
-        print(f"Player disconnected: {client_id}")
 
 async def main():
     port = int(os.environ.get("PORT", 8000))
     print(f"Starting server on port {port}...")
-    # These create_task calls are CRITICAL to start the loops
     asyncio.create_task(game_loop())
-    asyncio.create_task(spawner()) # New task
+    asyncio.create_task(spawner()) 
     async with websockets.serve(handler, "0.0.0.0", port):
         await asyncio.Future()
 

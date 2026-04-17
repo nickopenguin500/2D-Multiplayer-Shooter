@@ -7,4 +7,7 @@ Model: Gemini Pro
 5. ok its working, theres zombies, i can see the other player, and zombies can be hit by bullets and die
 6. can you make the game look better, maybe a green grass background, some obstacles in the arena, a bigger arena
 7. canvas is not defined, unsafe attempt to load url
-8. 
+8. can you make the player and zombies look a little better, maybe just add eyes. also could you add a healthbar in the bottom left that decreases when getting hit by a zombie, also add invincibility frames so you dont die instantly. add spaces (5) under the healthbar for items, which we will later add
+9. its possible to spawn inside an obstacle and get stuck. also the healthbar is too low, the item slots are out of frame
+10. now can we add new weapons. default is pistol in slot 1, lets add a assault rifle that can hold-shoot at a faster rate, but less damage. a shotgun in slot 3 that shoots at a slow pace, many pellets, low damage each pellet but a lot combined, a sniper in slot 4 that shoots at a very slow pace, very high damage and bullet speed
+11. nice, everything working very well. can you add weapon models for each of the weapons. also add a shields bar (up to 100) like fortnite, add damage indicators when you hit something or someone
