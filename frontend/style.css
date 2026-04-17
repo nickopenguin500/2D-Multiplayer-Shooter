@@ -1,0 +1,34 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #222;
+    color: white;
+    font-family: sans-serif;
+}
+canvas {
+    display: block;
+    background-color: #eee;
+    margin: 0 auto;
+}
+#ui {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 24px;
+    font-weight: bold;
+    color: black;
+    z-index: 10;
+}
+#loadingOverlay {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0, 0, 0, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    z-index: 100;
+}
+.hidden {
+    display: none !important;
+}

@@ -1,0 +1,6 @@
+Model: Gemini Pro
+
+1. im thinking 2d top down, maybe like zombsroyale style, but just ffa arena instead of battle royale. with zombie npcs to make it playable singleplayer
+2. be realistic, would that free render backend have very long delays
+3. ok could you implement this? tell me what files to create and what code to paste
+4. 
