@@ -18,6 +18,7 @@ state = {
 }
 connected_clients = set()
 
+# Generate random trees
 for _ in range(30):
     while True:
         tx = random.uniform(100, ARENA_SIZE - 100)
@@ -34,18 +35,82 @@ async def game_loop():
         
         state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
 
+        # 1. BULLET PHYSICS & COLLISIONS
         for b in state["bullets"][:]:
             b["x"] += b["vx"]
             b["y"] += b["vy"]
             hit_something = False
+            
+            # Bullet vs Trees
             for t in state["trees"]:
                 if math.hypot(b["x"] - t["x"], b["y"] - t["y"]) < b["radius"] + t["radius"]:
                     if b in state["bullets"]: state["bullets"].remove(b)
                     hit_something = True
                     break
-            if not hit_something and not (0 <= b["x"] <= ARENA_SIZE and 0 <= b["y"] <= ARENA_SIZE):
+            
+            if hit_something: continue
+
+            # NEW: Bullet vs Players (PvP Combat)
+            for pid, p in state["players"].items():
+                if pid != b["ownerId"]: # Make sure you don't hit yourself!
+                    if math.hypot(b["x"] - p["x"], b["y"] - p["y"]) < b["radius"] + p["radius"]:
+                        damage_taken = b["damage"]
+                        
+                        # Add red damage indicator
+                        state["damage_indicators"].append({
+                            "x": p["x"], "y": p["y"], "dmg": damage_taken, "expires": current_time + 0.5, "color": "#e74c3c"
+                        })
+                        
+                        # Apply to shields, spill over to health
+                        if p["shields"] >= damage_taken:
+                            p["shields"] -= damage_taken
+                        else:
+                            overflow = damage_taken - p["shields"]
+                            p["shields"] = 0
+                            p["health"] -= overflow
+                        
+                        # Destroy the bullet
+                        if b in state["bullets"]: state["bullets"].remove(b)
+                        hit_something = True
+                        
+                        # Check if player died to the bullet
+                        if p["health"] <= 0:
+                            p["health"] = 100
+                            p["shields"] = 50 
+                            p["x"], p["y"] = ARENA_SIZE / 2, ARENA_SIZE / 2
+                            p["score"] = 0 # Reset victim's score
+                            
+                            # Give shooter massive points for a PvP kill!
+                            if b["ownerId"] in state["players"]:
+                                state["players"][b["ownerId"]]["score"] += 100
+                        break # Stop checking this bullet against other players
+            
+            if hit_something: continue
+
+            # Bullet vs Zombies
+            for z in state["zombies"][:]:
+                if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
+                    z["health"] -= b["damage"] 
+                    state["damage_indicators"].append({
+                        "x": z["x"], "y": z["y"], "dmg": b["damage"], "expires": current_time + 0.5, "color": "#FFF"
+                    })
+                    if b in state["bullets"]: state["bullets"].remove(b) 
+                    hit_something = True
+                    
+                    if z["health"] <= 0: 
+                        if z in state["zombies"]: state["zombies"].remove(z)
+                        points = 30 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
+                        if b["ownerId"] in state["players"]:
+                            state["players"][b["ownerId"]]["score"] += points
+                    break 
+
+            if hit_something: continue
+            
+            # Remove bullets that fly off the edge of the map
+            if not (0 <= b["x"] <= ARENA_SIZE and 0 <= b["y"] <= ARENA_SIZE):
                 if b in state["bullets"]: state["bullets"].remove(b)
 
+        # 2. ZOMBIE MOVEMENT & PLAYER MELEE DAMAGE
         player_ids = list(state["players"].keys())
         for z in state["zombies"][:]:
             if player_ids:
@@ -65,7 +130,6 @@ async def game_loop():
             for pid, p in state["players"].items():
                 if math.hypot(z["x"] - p["x"], z["y"] - p["y"]) < z["radius"] + p["radius"]:
                     if current_time > p["iframeUntil"]:
-                        # Tanks do more damage, runners do less!
                         damage_taken = 25 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
                         
                         state["damage_indicators"].append({
@@ -85,22 +149,6 @@ async def game_loop():
                             p["x"], p["y"] = ARENA_SIZE / 2, ARENA_SIZE / 2
                             p["score"] = 0 
 
-            for b in state["bullets"][:]:
-                if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
-                    z["health"] -= b["damage"] 
-                    state["damage_indicators"].append({
-                        "x": z["x"], "y": z["y"], "dmg": b["damage"], "expires": current_time + 0.5, "color": "#FFF"
-                    })
-                    if b in state["bullets"]: state["bullets"].remove(b) 
-                    if z["health"] <= 0: 
-                        if z in state["zombies"]: state["zombies"].remove(z)
-                        
-                        # Award points based on zombie type
-                        points = 30 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
-                        if b["ownerId"] in state["players"]:
-                            state["players"][b["ownerId"]]["score"] += points
-                    break 
-
         if connected_clients:
             message = json.dumps({"type": "state", "data": state, "time": current_time})
             websockets.broadcast(connected_clients, message)
@@ -110,31 +158,21 @@ async def game_loop():
 async def spawner():
     while True:
         if len(state["zombies"]) < 15: 
-            # Weighted random choice: 60% standard, 30% runner, 10% tank
             z_type = random.choices(["standard", "runner", "tank"], weights=[60, 30, 10])[0]
             
             if z_type == "runner":
-                z_radius = 10
-                z_speed = random.uniform(4.5, 6.0)
-                z_health = 10
-                z_color = "#f39c12" # Orange
+                z_radius, z_speed, z_health, z_color = 10, random.uniform(4.5, 6.0), 10, "#f39c12"
             elif z_type == "tank":
-                z_radius = 35
-                z_speed = random.uniform(0.8, 1.5)
-                z_health = 100
-                z_color = "#2c3e50" # Dark Grey
+                z_radius, z_speed, z_health, z_color = 35, random.uniform(0.8, 1.5), 100, "#2c3e50"
             else:
-                z_radius = 15
-                z_speed = random.uniform(1.5, 3.0)
-                z_health = 30
-                z_color = "#2ecc71" # Normal Green
+                z_radius, z_speed, z_health, z_color = 15, random.uniform(1.5, 3.0), 30, "#2ecc71"
 
             state["zombies"].append({
                 "x": 0 if random.random() < 0.5 else ARENA_SIZE, "y": random.uniform(0, ARENA_SIZE),
                 "radius": z_radius, "speed": z_speed, "angle": 0, "health": z_health, 
                 "color": z_color, "type": z_type
             })
-        await asyncio.sleep(2) # Spawns slightly faster now!
+        await asyncio.sleep(2)
 
 async def handler(websocket):
     client_id = str(uuid.uuid4())
