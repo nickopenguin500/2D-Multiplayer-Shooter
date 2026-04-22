@@ -15,6 +15,16 @@ const WEAPONS = ['fists', 'pistol', 'ar', 'shotgun', 'sniper'];
 const WEAPON_NAMES = ['Fists', 'Pistol', 'AR', 'Shotgun', 'Sniper'];
 let currentWeaponIndex = 0; 
 
+// --- NEW: Rarity Color Map ---
+const RARITY_COLORS = {
+    common: '#bdc3c7',     // Gray
+    uncommon: '#2ecc71',   // Green
+    rare: '#3498db',       // Blue
+    epic: '#9b59b6',       // Purple
+    legendary: '#f1c40f',  // Gold
+    mythic: '#e74c3c'      // Red
+};
+
 let isMouseDown = false;
 let lastShotTime = 0;
 const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 1500 };
@@ -78,44 +88,51 @@ setInterval(() => {
     }
 }, 1000 / 60);
 
-// --- NEW: Distinct Side-Profile Weapon Icons ---
 function drawWeaponIcon(ctx, type) {
     if (type === 'fists') {
-        ctx.fillStyle = '#f1c40f'; // Golden fists
+        ctx.fillStyle = '#f1c40f'; 
         ctx.beginPath(); ctx.arc(-6, 0, 5, 0, Math.PI * 2); ctx.fill();
         ctx.beginPath(); ctx.arc(6, 0, 5, 0, Math.PI * 2); ctx.fill();
     } else if (type === 'pistol') {
-        ctx.fillStyle = '#95a5a6'; ctx.fillRect(-6, -4, 14, 4); // gray barrel
-        ctx.fillStyle = '#2c3e50'; ctx.fillRect(-6, 0, 5, 6);   // black grip
+        ctx.fillStyle = '#95a5a6'; ctx.fillRect(-6, -4, 14, 4); 
+        ctx.fillStyle = '#2c3e50'; ctx.fillRect(-6, 0, 5, 6);   
     } else if (type === 'ar') {
-        ctx.fillStyle = '#34495e'; ctx.fillRect(-12, -3, 24, 5); // dark body
-        ctx.fillStyle = '#7f8c8d'; ctx.fillRect(-16, -2, 4, 6);  // stock
-        ctx.fillStyle = '#111'; ctx.fillRect(-2, 2, 5, 8);       // magazine
+        ctx.fillStyle = '#34495e'; ctx.fillRect(-12, -3, 24, 5); 
+        ctx.fillStyle = '#7f8c8d'; ctx.fillRect(-16, -2, 4, 6);  
+        ctx.fillStyle = '#111'; ctx.fillRect(-2, 2, 5, 8);       
     } else if (type === 'shotgun') {
-        ctx.fillStyle = '#8b4513'; ctx.fillRect(-14, -3, 10, 6); // brown stock
-        ctx.fillStyle = '#7f8c8d'; ctx.fillRect(-4, -2, 16, 4);  // barrel
-        ctx.fillStyle = '#2c3e50'; ctx.fillRect(2, -4, 8, 8);    // pump action
+        ctx.fillStyle = '#8b4513'; ctx.fillRect(-14, -3, 10, 6); 
+        ctx.fillStyle = '#7f8c8d'; ctx.fillRect(-4, -2, 16, 4);  
+        ctx.fillStyle = '#2c3e50'; ctx.fillRect(2, -4, 8, 8);    
     } else if (type === 'sniper') {
-        ctx.fillStyle = '#27ae60'; ctx.fillRect(-15, -3, 20, 6); // green body
-        ctx.fillStyle = '#111'; ctx.fillRect(5, -1, 18, 3);      // long barrel
-        ctx.fillStyle = '#000'; ctx.fillRect(-5, -7, 12, 4);     // scope
+        ctx.fillStyle = '#27ae60'; ctx.fillRect(-15, -3, 20, 6); 
+        ctx.fillStyle = '#111'; ctx.fillRect(5, -1, 18, 3);      
+        ctx.fillStyle = '#000'; ctx.fillRect(-5, -7, 12, 4);     
     }
 }
 
-function drawItem(x, y, type) {
+// UPDATED: Now receives a rarity property and uses globalAlpha for a cleaner glow
+function drawItem(x, y, type, rarity) {
     ctx.save();
     ctx.translate(x, y);
     
+    let glowColor = RARITY_COLORS[rarity] || '#FFF';
+
     // Glowing aura circle
     ctx.beginPath();
     ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    
+    // Fill with low opacity
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = glowColor;
     ctx.fill();
-    ctx.strokeStyle = '#FFF';
+    
+    // Stroke with full opacity
+    ctx.globalAlpha = 1.0;
+    ctx.strokeStyle = glowColor;
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Draw the distinct weapon icon
     drawWeaponIcon(ctx, type);
     
     ctx.restore();
@@ -126,7 +143,6 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
     ctx.translate(x, y);
     ctx.rotate(angle);
 
-    // Top-down representation of holding the weapons (Colors match the icons!)
     if (weaponType && weaponType !== 'fists') {
         if (weaponType === 'pistol') {
             ctx.fillStyle = '#95a5a6'; ctx.fillRect(radius - 5, 2, 14, 4);
@@ -180,9 +196,10 @@ function draw() {
     }
     ctx.strokeStyle = '#FF0000'; ctx.lineWidth = 5; ctx.strokeRect(0, 0, 2000, 2000);
 
+    // Pass item rarity up!
     if (currentState.items) {
         currentState.items.forEach(item => {
-            drawItem(item.x, item.y, item.type);
+            drawItem(item.x, item.y, item.type, item.rarity);
         });
     }
 
@@ -276,22 +293,18 @@ function draw() {
         ctx.fillRect(x, itemsY, slotSize, slotSize);
         ctx.strokeRect(x, itemsY, slotSize, slotSize);
 
-        // --- NEW: Draw the Icon inside the Inventory Slot! ---
         let slotWeapon = WEAPONS[i];
         if (slotWeapon) {
             ctx.save();
-            // Translate to the center of the UI box
             ctx.translate(x + slotSize / 2, itemsY + slotSize / 2 - 5);
             drawWeaponIcon(ctx, slotWeapon);
             ctx.restore();
         }
 
-        // Draw Slot Number (Top Left)
         ctx.fillStyle = '#FFF';
         ctx.textAlign = 'left';
         ctx.fillText(i + 1, x + 5, itemsY + 12);
         
-        // Draw Weapon Name (Bottom Center)
         if (i < WEAPON_NAMES.length) {
             ctx.textAlign = 'center';
             ctx.fillText(WEAPON_NAMES[i], x + slotSize/2, itemsY + slotSize - 3);

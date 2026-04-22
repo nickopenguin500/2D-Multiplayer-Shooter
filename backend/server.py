@@ -15,7 +15,7 @@ state = {
     "zombies": [],
     "trees": [],
     "damage_indicators": [],
-    "items": [] # NEW: Track items on the ground
+    "items": [] 
 }
 connected_clients = set()
 
@@ -30,15 +30,21 @@ for _ in range(30):
             state["trees"].append({"x": tx, "y": ty, "radius": tradius})
             break 
 
-# NEW: Spawn testing weapons around the center where players spawn
+# --- NEW: WEAPON RARITIES & WEIGHTS ---
+# Common (50%), Uncommon (25%), Rare (15%), Epic (8%), Legendary (1.9%), Mythic (0.1%)
+RARITY_CHOICES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
+RARITY_WEIGHTS = [50, 25, 15, 8, 1.9, 0.1]
+
 test_weapons = ["pistol", "ar", "shotgun", "sniper"]
-offsets = [(-50, -50), (50, -50), (-50, 50), (50, 50)] # Top-left, Top-right, Bottom-left, Bottom-right
+offsets = [(-50, -50), (50, -50), (-50, 50), (50, 50)] 
 for i, w_type in enumerate(test_weapons):
+    chosen_rarity = random.choices(RARITY_CHOICES, weights=RARITY_WEIGHTS)[0]
     state["items"].append({
-        "id": str(uuid.uuid4()), # Unique ID so we can pick them up later
+        "id": str(uuid.uuid4()), 
         "x": ARENA_SIZE / 2 + offsets[i][0],
         "y": ARENA_SIZE / 2 + offsets[i][1],
         "type": w_type,
+        "rarity": chosen_rarity, # Attach rarity to the item!
         "radius": 15
     })
 
@@ -190,7 +196,9 @@ async def handler(websocket):
                         spread_angle = angle + random.uniform(-0.25, 0.25)
                         bullet_speed = random.uniform(12, 16)
                         state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(spread_angle) * bullet_speed, "vy": math.sin(spread_angle) * bullet_speed, "ownerId": client_id, "radius": 3, "damage": 6})
-                elif weapon == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 35, "vy": math.sin(angle) * 35, "ownerId": client_id, "radius": 8, "damage": 50})
+                
+                # UPDATED: Sniper radius dropped from 8 to 5
+                elif weapon == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 35, "vy": math.sin(angle) * 35, "ownerId": client_id, "radius": 5, "damage": 50})
     except websockets.exceptions.ConnectionClosed: pass
     finally:
         connected_clients.remove(websocket)
