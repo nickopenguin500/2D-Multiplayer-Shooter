@@ -14,10 +14,12 @@ state = {
     "bullets": [],
     "zombies": [],
     "trees": [],
-    "damage_indicators": [] 
+    "damage_indicators": [],
+    "items": [] # NEW: Track items on the ground
 }
 connected_clients = set()
 
+# Generate random trees
 for _ in range(30):
     while True:
         tx = random.uniform(100, ARENA_SIZE - 100)
@@ -27,6 +29,18 @@ for _ in range(30):
         if dist_to_center > tradius + 150:
             state["trees"].append({"x": tx, "y": ty, "radius": tradius})
             break 
+
+# NEW: Spawn testing weapons around the center where players spawn
+test_weapons = ["pistol", "ar", "shotgun", "sniper"]
+offsets = [(-50, -50), (50, -50), (-50, 50), (50, 50)] # Top-left, Top-right, Bottom-left, Bottom-right
+for i, w_type in enumerate(test_weapons):
+    state["items"].append({
+        "id": str(uuid.uuid4()), # Unique ID so we can pick them up later
+        "x": ARENA_SIZE / 2 + offsets[i][0],
+        "y": ARENA_SIZE / 2 + offsets[i][1],
+        "type": w_type,
+        "radius": 15
+    })
 
 async def game_loop():
     while True:
@@ -91,20 +105,15 @@ async def game_loop():
                 angle = math.atan2(target_p["y"] - z["y"], target_p["x"] - z["x"])
                 z["angle"] = angle
                 
-                # Let the zombie move normally first
                 z["x"] += math.cos(angle) * z["speed"]
                 z["y"] += math.sin(angle) * z["speed"]
 
-                # NEW: SLIDING COLLISION LOGIC FOR ZOMBIES
                 for t in state["trees"]:
                     dist = math.hypot(z["x"] - t["x"], z["y"] - t["y"])
                     min_dist = z["radius"] + t["radius"]
                     if dist < min_dist:
-                        # Calculate how far inside the tree we are
                         overlap = min_dist - dist
-                        # Find the angle FROM the tree TO the zombie
                         push_angle = math.atan2(z["y"] - t["y"], z["x"] - t["x"])
-                        # Push the zombie out along that angle
                         z["x"] += math.cos(push_angle) * overlap
                         z["y"] += math.sin(push_angle) * overlap
 
@@ -160,7 +169,6 @@ async def handler(websocket):
                 p["x"] = max(0, min(ARENA_SIZE, p["x"]))
                 p["y"] = max(0, min(ARENA_SIZE, p["y"]))
                 
-                # NEW: SLIDING COLLISION LOGIC FOR PLAYERS
                 for t in state["trees"]:
                     dist = math.hypot(p["x"] - t["x"], p["y"] - t["y"])
                     min_dist = p["radius"] + t["radius"]
