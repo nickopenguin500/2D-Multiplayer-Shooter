@@ -139,6 +139,34 @@ function getWeaponName(w) {
     return w.charAt(0).toUpperCase() + w.slice(1);
 }
 
+function drawLootBox(box) {
+    ctx.save();
+    ctx.translate(box.x, box.y);
+    
+    // Box Shadow/Base
+    ctx.fillStyle = box.type === 'chest' ? '#d4af37' : '#8b4513';
+    ctx.fillRect(-box.radius, -box.radius, box.radius*2, box.radius*2);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-box.radius, -box.radius, box.radius*2, box.radius*2);
+
+    // Detail lines
+    ctx.beginPath();
+    ctx.moveTo(-box.radius, -box.radius); ctx.lineTo(box.radius, box.radius);
+    ctx.moveTo(box.radius, -box.radius); ctx.lineTo(-box.radius, box.radius);
+    ctx.stroke();
+
+    // Interaction Prompt
+    const dist = Math.hypot(currentState.players[myId].x - box.x, currentState.players[myId].y - box.y);
+    if (dist < 60) {
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('[E] OPEN', 0, -box.radius - 10);
+    }
+    ctx.restore();
+}
+
 function drawWeaponIcon(ctx, type) {
     if (type === 'fists') {
         ctx.fillStyle = '#f1c40f'; 
@@ -242,12 +270,26 @@ function draw() {
     }
     ctx.strokeStyle = '#FF0000'; ctx.lineWidth = 5; ctx.strokeRect(0, 0, 2000, 2000);
 
+    // Draw Loot Boxes
+    if (currentState.loot_boxes) {
+        currentState.loot_boxes.forEach(box => drawLootBox(box));
+    }
+
+    // Draw Items
     if (currentState.items) {
         currentState.items.forEach(item => {
             drawItem(item.x, item.y, item.type, item.rarity);
+            // Prompt for items too
+            const dist = Math.hypot(currentState.players[myId].x - item.x, currentState.players[myId].y - item.y);
+            if (dist < 50) {
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('[E] PICKUP', item.x, item.y - 25);
+            }
         });
     }
-
+    
     if (currentState.trees) {
         ctx.fillStyle = '#5D4037';
         currentState.trees.forEach(t => {

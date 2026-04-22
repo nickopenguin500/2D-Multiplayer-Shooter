@@ -14,244 +14,196 @@ state = {
     "bullets": [],
     "zombies": [],
     "trees": [],
-    "damage_indicators": [],
-    "items": [] 
+    "items": [],
+    "loot_boxes": [], # NEW: Chests and Crates
+    "damage_indicators": []
 }
 connected_clients = set()
 
-# Generate random trees
-for _ in range(30):
-    while True:
-        tx = random.uniform(100, ARENA_SIZE - 100)
-        ty = random.uniform(100, ARENA_SIZE - 100)
-        tradius = random.uniform(30, 60)
-        dist_to_center = math.hypot(tx - (ARENA_SIZE / 2), ty - (ARENA_SIZE / 2))
-        if dist_to_center > tradius + 150:
-            state["trees"].append({"x": tx, "y": ty, "radius": tradius})
-            break 
-
+# Rarity Logic
 RARITY_CHOICES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
-RARITY_WEIGHTS = [50, 25, 15, 8, 1.9, 0.1]
+RARITY_WEIGHTS_CRATE = [70, 20, 8, 1.8, 0.2, 0.0]
+RARITY_WEIGHTS_CHEST = [10, 30, 40, 15, 4, 1.0]
 
-test_weapons = ["pistol", "ar", "shotgun", "sniper"]
-offsets = [(-50, -50), (50, -50), (-50, 50), (50, 50)] 
-for i, w_type in enumerate(test_weapons):
-    chosen_rarity = random.choices(RARITY_CHOICES, weights=RARITY_WEIGHTS)[0]
-    state["items"].append({
-        "id": str(uuid.uuid4()), 
-        "x": ARENA_SIZE / 2 + offsets[i][0],
-        "y": ARENA_SIZE / 2 + offsets[i][1],
-        "type": w_type,
-        "rarity": chosen_rarity,
-        "radius": 15
-    })
+def spawn_trees():
+    for _ in range(30):
+        while True:
+            tx, ty = random.uniform(100, ARENA_SIZE-100), random.uniform(100, ARENA_SIZE-100)
+            tr = random.uniform(30, 60)
+            if math.hypot(tx - 1000, ty - 1000) > tr + 150:
+                state["trees"].append({"x": tx, "y": ty, "radius": tr})
+                break
+
+def spawn_loot():
+    # Spawn 15 Crates and 5 Chests initially
+    for _ in range(15):
+        state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": random.uniform(100, 1900), "y": random.uniform(100, 1900), "type": "crate", "radius": 20})
+    for _ in range(5):
+        state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": random.uniform(100, 1900), "y": random.uniform(100, 1900), "type": "chest", "radius": 25})
+
+spawn_trees()
+spawn_loot()
 
 async def game_loop():
     while True:
         current_time = time.time()
-        
         state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
 
+        # 1. BULLET PHYSICS (With Substepping for High-Speed Snipers)
         for b in state["bullets"][:]:
-            b["x"] += b["vx"]
-            b["y"] += b["vy"]
+            steps = 3 if math.hypot(b["vx"], b["vy"]) > 25 else 1
             hit_something = False
             
-            for t in state["trees"]:
-                if math.hypot(b["x"] - t["x"], b["y"] - t["y"]) < b["radius"] + t["radius"]:
-                    if b in state["bullets"]: state["bullets"].remove(b)
-                    hit_something = True
-                    break
-            
-            if hit_something: continue
+            for _ in range(steps):
+                if hit_something: break
+                b["x"] += b["vx"] / steps
+                b["y"] += b["vy"] / steps
 
-            for pid, p in state["players"].items():
-                if pid != b["ownerId"]: 
-                    if math.hypot(b["x"] - p["x"], b["y"] - p["y"]) < b["radius"] + p["radius"]:
-                        damage_taken = b["damage"]
-                        state["damage_indicators"].append({"x": p["x"], "y": p["y"], "dmg": damage_taken, "expires": current_time + 0.5, "color": "#e74c3c"})
-                        if p["shields"] >= damage_taken: p["shields"] -= damage_taken
-                        else:
-                            overflow = damage_taken - p["shields"]
-                            p["shields"] = 0
-                            p["health"] -= overflow
+                # Tree Collision
+                for t in state["trees"]:
+                    if math.hypot(b["x"] - t["x"], b["y"] - t["y"]) < b["radius"] + t["radius"]:
+                        if b in state["bullets"]: state["bullets"].remove(b)
+                        hit_something = True; break
+                if hit_something: break
+
+                # PvP Collision
+                for pid, p in state["players"].items():
+                    if pid != b["ownerId"] and math.hypot(b["x"] - p["x"], b["y"] - p["y"]) < b["radius"] + p["radius"]:
+                        dmg = b["damage"]
+                        state["damage_indicators"].append({"x": p["x"], "y": p["y"], "dmg": dmg, "expires": current_time + 0.5, "color": "#e74c3c"})
+                        if p["shields"] >= dmg: p["shields"] -= dmg
+                        else: p["health"] -= (dmg - p["shields"]); p["shields"] = 0
                         if b in state["bullets"]: state["bullets"].remove(b)
                         hit_something = True
                         if p["health"] <= 0:
-                            p["health"], p["shields"], p["x"], p["y"], p["score"] = 100, 50, ARENA_SIZE / 2, ARENA_SIZE / 2, 0
+                            p["health"], p["shields"], p["x"], p["y"], p["score"] = 100, 50, 1000, 1000, 0
                             if b["ownerId"] in state["players"]: state["players"][b["ownerId"]]["score"] += 100
-                        break 
-            
-            if hit_something: continue
+                        break
+                if hit_something: break
 
-            for z in state["zombies"][:]:
-                if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
-                    z["health"] -= b["damage"] 
-                    state["damage_indicators"].append({"x": z["x"], "y": z["y"], "dmg": b["damage"], "expires": current_time + 0.5, "color": "#FFF"})
-                    if b in state["bullets"]: state["bullets"].remove(b) 
-                    hit_something = True
-                    if z["health"] <= 0: 
-                        if z in state["zombies"]: state["zombies"].remove(z)
-                        points = 30 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
-                        if b["ownerId"] in state["players"]: state["players"][b["ownerId"]]["score"] += points
-                    break 
-
-            if hit_something: continue
+                # Zombie Collision
+                for z in state["zombies"][:]:
+                    if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
+                        z["health"] -= b["damage"]
+                        state["damage_indicators"].append({"x": z["x"], "y": z["y"], "dmg": b["damage"], "expires": current_time + 0.5, "color": "#FFF"})
+                        if b in state["bullets"]: state["bullets"].remove(b)
+                        hit_something = True
+                        if z["health"] <= 0:
+                            if z in state["zombies"]: state["zombies"].remove(z)
+                            pts = 30 if z["type"] == "tank" else (5 if z["type"] == "runner" else 10)
+                            if b["ownerId"] in state["players"]: state["players"][b["ownerId"]]["score"] += pts
+                        break
             
-            if not (0 <= b["x"] <= ARENA_SIZE and 0 <= b["y"] <= ARENA_SIZE):
+            if not hit_something and not (0 <= b["x"] <= ARENA_SIZE and 0 <= b["y"] <= ARENA_SIZE):
                 if b in state["bullets"]: state["bullets"].remove(b)
 
+        # 2. ZOMBIE AI (With Sliding)
         player_ids = list(state["players"].keys())
         for z in state["zombies"][:]:
             if player_ids:
-                nearest_id = min(player_ids, key=lambda pid: math.hypot(state["players"][pid]["x"] - z["x"], state["players"][pid]["y"] - z["y"]))
-                target_p = state["players"][nearest_id]
-                angle = math.atan2(target_p["y"] - z["y"], target_p["x"] - z["x"])
+                target = state["players"][min(player_ids, key=lambda pid: math.hypot(state["players"][pid]["x"] - z["x"], state["players"][pid]["y"] - z["y"]))]
+                angle = math.atan2(target["y"] - z["y"], target["x"] - z["x"])
                 z["angle"] = angle
-                
                 z["x"] += math.cos(angle) * z["speed"]
                 z["y"] += math.sin(angle) * z["speed"]
 
                 for t in state["trees"]:
-                    dist = math.hypot(z["x"] - t["x"], z["y"] - t["y"])
-                    min_dist = z["radius"] + t["radius"]
-                    if dist < min_dist:
-                        overlap = min_dist - dist
-                        push_angle = math.atan2(z["y"] - t["y"], z["x"] - t["x"])
-                        z["x"] += math.cos(push_angle) * overlap
-                        z["y"] += math.sin(push_angle) * overlap
+                    d = math.hypot(z["x"] - t["x"], z["y"] - t["y"])
+                    if d < z["radius"] + t["radius"]:
+                        overlap = (z["radius"] + t["radius"]) - d
+                        pa = math.atan2(z["y"] - t["y"], z["x"] - t["x"])
+                        z["x"] += math.cos(pa) * overlap; z["y"] += math.sin(pa) * overlap
 
             for pid, p in state["players"].items():
                 if math.hypot(z["x"] - p["x"], z["y"] - p["y"]) < z["radius"] + p["radius"]:
                     if current_time > p["iframeUntil"]:
-                        damage_taken = 25 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
-                        state["damage_indicators"].append({"x": p["x"], "y": p["y"], "dmg": damage_taken, "expires": current_time + 0.5, "color": "#e74c3c"})
-                        if p["shields"] >= damage_taken: p["shields"] -= damage_taken
-                        else:
-                            overflow = damage_taken - p["shields"]
-                            p["shields"] = 0
-                            p["health"] -= overflow
-                        p["iframeUntil"] = current_time + 1.0 
-                        if p["health"] <= 0:
-                            p["health"], p["shields"], p["x"], p["y"], p["score"] = 100, 50, ARENA_SIZE / 2, ARENA_SIZE / 2, 0 
+                        dmg = 25 if z["type"] == "tank" else (5 if z["type"] == "runner" else 10)
+                        state["damage_indicators"].append({"x": p["x"], "y": p["y"], "dmg": dmg, "expires": current_time + 0.5, "color": "#e74c3c"})
+                        if p["shields"] >= dmg: p["shields"] -= dmg
+                        else: p["health"] -= (dmg - p["shields"]); p["shields"] = 0
+                        p["iframeUntil"] = current_time + 1.0
+                        if p["health"] <= 0: p["health"], p["shields"], p["x"], p["y"], p["score"] = 100, 50, 1000, 1000, 0
 
         if connected_clients:
-            message = json.dumps({"type": "state", "data": state, "time": current_time})
-            websockets.broadcast(connected_clients, message)
-        
+            websockets.broadcast(connected_clients, json.dumps({"type": "state", "data": state, "time": current_time}))
         await asyncio.sleep(1/30)
 
-async def spawner():
-    while True:
-        if len(state["zombies"]) < 15: 
-            z_type = random.choices(["standard", "runner", "tank"], weights=[60, 30, 10])[0]
-            if z_type == "runner": z_radius, z_speed, z_health, z_color = 10, random.uniform(4.5, 6.0), 10, "#f39c12"
-            elif z_type == "tank": z_radius, z_speed, z_health, z_color = 35, random.uniform(0.8, 1.5), 100, "#2c3e50"
-            else: z_radius, z_speed, z_health, z_color = 15, random.uniform(1.5, 3.0), 30, "#2ecc71"
-            state["zombies"].append({"x": 0 if random.random() < 0.5 else ARENA_SIZE, "y": random.uniform(0, ARENA_SIZE), "radius": z_radius, "speed": z_speed, "angle": 0, "health": z_health, "color": z_color, "type": z_type})
-        await asyncio.sleep(2)
-
 async def handler(websocket):
-    client_id = str(uuid.uuid4())
+    cid = str(uuid.uuid4())
     connected_clients.add(websocket)
-    state["players"][client_id] = {"x": ARENA_SIZE / 2, "y": ARENA_SIZE / 2, "radius": 15, "color": f"hsl({random.randint(0, 360)}, 100%, 50%)", "score": 0, "health": 100, "shields": 50, "iframeUntil": 0, "aimAngle": 0, "currentWeapon": "fists"}
-    await websocket.send(json.dumps({"type": "init", "id": client_id}))
+    state["players"][cid] = {"x": 1000, "y": 1000, "radius": 15, "color": f"hsl({random.randint(0,360)},100%,50%)", "score": 0, "health": 100, "shields": 50, "iframeUntil": 0, "aimAngle": 0, "currentWeapon": "fists"}
+    await websocket.send(json.dumps({"type": "init", "id": cid}))
     
     try:
         async for message in websocket:
             data = json.loads(message)
-            
             if data["type"] == "move":
-                p = state["players"][client_id]
-                old_x, old_y = p["x"], p["y"]
-                p["aimAngle"] = data["aimAngle"] 
-                p["currentWeapon"] = data.get("weapon", "fists") 
-                
-                # UPDATED: Base speed increased!
+                p = state["players"][cid]
+                p["aimAngle"] = data["aimAngle"]
+                p["currentWeapon"] = data.get("weapon", "fists")
                 speed = 9.1 if p["currentWeapon"] == "fists" else 7.0
-                
-                dx, dy = 0, 0
-                if data["up"]: dy -= 1
-                if data["down"]: dy += 1
-                if data["left"]: dx -= 1
-                if data["right"]: dx += 1
-                
-                # NEW: Normalize diagonal movement vector
-                if dx != 0 or dy != 0:
-                    length = math.hypot(dx, dy)
-                    p["x"] += (dx / length) * speed
-                    p["y"] += (dy / length) * speed
-                
-                p["x"] = max(0, min(ARENA_SIZE, p["x"]))
-                p["y"] = max(0, min(ARENA_SIZE, p["y"]))
-                
+                dx, dy = (1 if data["right"] else 0) - (1 if data["left"] else 0), (1 if data["down"] else 0) - (1 if data["up"] else 0)
+                if dx or dy:
+                    mag = math.hypot(dx, dy)
+                    p["x"] += (dx/mag)*speed; p["y"] += (dy/mag)*speed
+                p["x"], p["y"] = max(0, min(ARENA_SIZE, p["x"])), max(0, min(ARENA_SIZE, p["y"]))
                 for t in state["trees"]:
-                    dist = math.hypot(p["x"] - t["x"], p["y"] - t["y"])
-                    min_dist = p["radius"] + t["radius"]
-                    if dist < min_dist:
-                        overlap = min_dist - dist
-                        push_angle = math.atan2(p["y"] - t["y"], p["x"] - t["x"])
-                        p["x"] += math.cos(push_angle) * overlap
-                        p["y"] += math.sin(push_angle) * overlap
+                    d = math.hypot(p["x"] - t["x"], p["y"] - t["y"])
+                    if d < p["radius"] + t["radius"]:
+                        overlap = (p["radius"] + t["radius"]) - d
+                        pa = math.atan2(p["y"] - t["y"], p["x"] - t["x"])
+                        p["x"] += math.cos(pa) * overlap; p["y"] += math.sin(pa) * overlap
             
-            # NEW: Handle Picking up items
             elif data["type"] == "interact":
-                p = state["players"][client_id]
-                closest_item = None
-                min_dist = float('inf')
-                
-                # Find the nearest item within 40 pixels
-                for item in state["items"]:
-                    dist = math.hypot(p["x"] - item["x"], p["y"] - item["y"])
-                    if dist < p["radius"] + item["radius"] + 25: 
-                        if dist < min_dist:
-                            min_dist = dist
-                            closest_item = item
-                
-                if closest_item:
-                    state["items"].remove(closest_item)
-                    # Send specific message directly to the player who picked it up
-                    await websocket.send(json.dumps({
-                        "type": "pickup", 
-                        "weapon": closest_item["type"], 
-                        "rarity": closest_item["rarity"]
-                    }))
-                    
-            # NEW: Handle Dropping items
+                p = state["players"][cid]
+                # Check Loot Boxes first
+                for box in state["loot_boxes"][:]:
+                    if math.hypot(p["x"] - box["x"], p["y"] - box["y"]) < p["radius"] + box["radius"] + 20:
+                        weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
+                        count = random.randint(2, 3) if box["type"] == "chest" else random.randint(1, 2)
+                        for _ in range(count):
+                            state["items"].append({
+                                "id": str(uuid.uuid4()), "x": box["x"] + random.uniform(-30, 30), "y": box["y"] + random.uniform(-30, 30),
+                                "type": random.choice(["pistol", "ar", "shotgun", "sniper"]),
+                                "rarity": random.choices(RARITY_CHOICES, weights=weights)[0], "radius": 15
+                            })
+                        state["loot_boxes"].remove(box)
+                        break
+                # Check Items
+                for item in state["items"][:]:
+                    if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
+                        await websocket.send(json.dumps({"type": "pickup", "weapon": item["type"], "rarity": item["rarity"]}))
+                        state["items"].remove(item); break
+            
             elif data["type"] == "drop":
-                p = state["players"][client_id]
-                state["items"].append({
-                    "id": str(uuid.uuid4()),
-                    "x": p["x"], "y": p["y"],
-                    "type": data["weapon"],
-                    "rarity": data["rarity"],
-                    "radius": 15
-                })
-
+                state["items"].append({"id": str(uuid.uuid4()), "x": state["players"][cid]["x"], "y": state["players"][cid]["y"], "type": data["weapon"], "rarity": data["rarity"], "radius": 15})
+            
             elif data["type"] == "shoot":
-                angle = data["angle"]
-                weapon = data["weapon"]
-                p = state["players"][client_id]
-                
-                if weapon == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 15, "vy": math.sin(angle) * 15, "ownerId": client_id, "radius": 5, "damage": 10})
-                elif weapon == "ar": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 18, "vy": math.sin(angle) * 18, "ownerId": client_id, "radius": 4, "damage": 5})
-                elif weapon == "shotgun":
+                p = state["players"][cid]; a = data["angle"]; w = data["weapon"]
+                if w == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10})
+                elif w == "ar": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5})
+                elif w == "shotgun":
                     for _ in range(5):
-                        spread_angle = angle + random.uniform(-0.25, 0.25)
-                        bullet_speed = random.uniform(12, 16)
-                        state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(spread_angle) * bullet_speed, "vy": math.sin(spread_angle) * bullet_speed, "ownerId": client_id, "radius": 3, "damage": 6})
-                elif weapon == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 35, "vy": math.sin(angle) * 35, "ownerId": client_id, "radius": 5, "damage": 50})
+                        sa = a + random.uniform(-0.25, 0.25)
+                        sp = random.uniform(12, 16)
+                        state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(sa)*sp, "vy": math.sin(sa)*sp, "ownerId": cid, "radius": 3, "damage": 6})
+                elif w == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50})
+
     except websockets.exceptions.ConnectionClosed: pass
-    finally:
-        connected_clients.remove(websocket)
-        if client_id in state["players"]: del state["players"][client_id]
+    finally: connected_clients.remove(websocket); del state["players"][cid]
+
+async def spawner():
+    while True:
+        if len(state["zombies"]) < 15:
+            zt = random.choices(["standard", "runner", "tank"], weights=[60, 30, 10])[0]
+            if zt == "runner": r, s, h, c = 10, random.uniform(4.5, 6.0), 10, "#f39c12"
+            elif zt == "tank": r, s, h, c = 35, random.uniform(0.8, 1.5), 100, "#2c3e50"
+            else: r, s, h, c = 15, random.uniform(1.5, 3.0), 30, "#2ecc71"
+            state["zombies"].append({"x": random.choice([0, 2000]), "y": random.uniform(0, 2000), "radius": r, "speed": s, "angle": 0, "health": h, "color": c, "type": zt})
+        await asyncio.sleep(2)
 
 async def main():
-    port = int(os.environ.get("PORT", 8000))
-    print(f"Starting server on port {port}...")
-    asyncio.create_task(game_loop())
-    asyncio.create_task(spawner()) 
-    async with websockets.serve(handler, "0.0.0.0", port): await asyncio.Future()
+    asyncio.create_task(game_loop()); asyncio.create_task(spawner())
+    async with websockets.serve(handler, "0.0.0.0", int(os.environ.get("PORT", 8000))): await asyncio.Future()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == "__main__": asyncio.run(main())
