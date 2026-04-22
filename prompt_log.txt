@@ -13,4 +13,17 @@ Model: Gemini Pro
 11. nice, everything working very well. can you add weapon models for each of the weapons. also add a shields bar (up to 100) like fortnite, add damage indicators when you hit something or someone
 12. can you shift everything over one slot in the inventory, make slot 1 permanently fists (two small circles for the viewmodel), holding fists makes you move 30% faster
 13. ok, heres the code right now. lets keep working. add two more zombie difficulties, one much faster but smaller and lower health. one much larger but slower and more health. 
-14. 
+14. ok now lets make this a bit more like zombsroyale. make it possible to hit other players, but not yourself
+15. add a bit more complexity to the zombie AI. right now, if they are even barely touching an obstacle, they cant move at all. make it so they slide off the obstacle (if its a circle) this way: even if they cant move directly towards a player, they try to move as much as they can, which ends up moving them sideways a little bit (very slowly) usually. tell me if this doesnt make sense
+16. now add icons for the weapons. they don't have to be complex, just recognizable. make it so they can be found on the ground. I intend later to allow them to be picked up and dropped by players. for testing purposes, spawn each weapon around where the players spawn.
+17. the icons are a bit hard to recognize. im not even sure what each one is besides the sniper. also add these icons to the inventory too
+18. decrease the sniper projectile size a little bit, now add weapon rarities: common (gray), uncommon (green), rare (blue), epic (purple), legendary (gold), and mythic (red). assign chances for each to spawn accordingly, although we havent implemented how they will spawn yet.
+19. yes. make pick up "e". also fix player movement. at the moment it adds dx and dy if both are held, but that makes diagonal movement really fast. increase the default (and therefore also fists) movement speed a little
+20. the sniper might move too fast, im noticing its passing through the fast small zombies sometimes without doing damage. also we can add weapon spawns now. For now, add chests (better and more loot) and crates (very common but less loot, somewhere around 1-2 weapons) that spawn randomly around the map
+
+Not yet entered:
+1. some of the weapons dont seem to change at all between rarities (like shotgun) i understand it may be hard to balance. in that case, maybe change pellet number? or use decimals but round it when showing the player in the ui. 
+2. Now add some kind of indication for when a player dies. Make them drop all their items (scatter, not completely overlapping), preferably make a menu screen that can also act as the spawn and respawn screen. In this screen, let the player enter a name that will be shown to other players. put a character limit and english limit on this name so nobody can abuse it and enter in very long or big distracting names.
+3. add bandages, medkits, mini shields, and big shields to the lootpool. (bandages spawn 5 at a time, 15 max stack, heals 15 health per up to 75 max. medkits spawn 1 at a time, 3 max stack, heals 100 health per without overflow. minis spawn 2 at a time, 6 max, 25 shields per up to 50 max. bigs spawn 1 at a time, 3 max, 50 shields per.)
+4. add ammo and reloading, try to add a reasonable amount, every weapon spawns fully loaded, add ammo crates around the map that just give ammo of three types (can randomly be the same). every time you unbox a weapon, drop ammo for that type. Pistols: light, AR: medium, Shotgun: shotgun, Sniper: heavy
+3. how to put on render
