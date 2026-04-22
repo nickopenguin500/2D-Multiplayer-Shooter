@@ -12,4 +12,5 @@ Model: Gemini Pro
 10. now can we add new weapons. default is pistol in slot 1, lets add a assault rifle that can hold-shoot at a faster rate, but less damage. a shotgun in slot 3 that shoots at a slow pace, many pellets, low damage each pellet but a lot combined, a sniper in slot 4 that shoots at a very slow pace, very high damage and bullet speed
 11. nice, everything working very well. can you add weapon models for each of the weapons. also add a shields bar (up to 100) like fortnite, add damage indicators when you hit something or someone
 12. can you shift everything over one slot in the inventory, make slot 1 permanently fists (two small circles for the viewmodel), holding fists makes you move 30% faster
-13. 
+13. ok, heres the code right now. lets keep working. add two more zombie difficulties, one much faster but smaller and lower health. one much larger but slower and more health. 
+14. 

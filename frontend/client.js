@@ -11,14 +11,12 @@ let myId = null;
 let serverTime = 0; 
 let mouseX = 0, mouseY = 0; 
 
-// NEW: Shifted inventory
 const WEAPONS = ['fists', 'pistol', 'ar', 'shotgun', 'sniper'];
 const WEAPON_NAMES = ['Fists', 'Pistol', 'AR', 'Shotgun', 'Sniper'];
-let currentWeaponIndex = 0; // Starts at 0 (Fists)
+let currentWeaponIndex = 0; 
 
 let isMouseDown = false;
 let lastShotTime = 0;
-// Added a placeholder fire rate for fists just so the loop doesn't break
 const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 1500 };
 
 const socket = new WebSocket('ws://localhost:8000');
@@ -39,7 +37,6 @@ window.addEventListener('keydown', (e) => {
     if (k === 'w') movement.up = true; if (k === 'a') movement.left = true;
     if (k === 's') movement.down = true; if (k === 'd') movement.right = true;
     
-    // NEW: Added the '5' key
     if (k === '1') currentWeaponIndex = 0;
     if (k === '2') currentWeaponIndex = 1;
     if (k === '3') currentWeaponIndex = 2;
@@ -86,7 +83,6 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
     ctx.translate(x, y);
     ctx.rotate(angle);
 
-    // Draw Guns (Rendered under the body)
     if (weaponType && weaponType !== 'fists') {
         ctx.fillStyle = '#333'; 
         if (weaponType === 'pistol') {
@@ -102,24 +98,17 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
         }
     }
 
-    // Body
     ctx.fillStyle = colorMain;
     ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
 
-    // NEW: Draw Fists (Rendered over the body)
     if (weaponType === 'fists') {
         ctx.fillStyle = colorMain;
-        
-        // Left fist (angled slightly out and forward)
         ctx.beginPath(); ctx.arc(radius * 0.6, -radius * 0.8, radius * 0.4, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
-        
-        // Right fist
         ctx.beginPath(); ctx.arc(radius * 0.6, radius * 0.8, radius * 0.4, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
     }
 
-    // Eyes
     const eyeRadius = radius * 0.3;
     const eyeOffsetAngle = 0.6; 
     const eyeDistance = radius * 0.6;
@@ -127,7 +116,6 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
     ctx.beginPath(); ctx.arc(Math.cos(-eyeOffsetAngle) * eyeDistance, Math.sin(-eyeOffsetAngle) * eyeDistance, eyeRadius, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(Math.cos(eyeOffsetAngle) * eyeDistance, Math.sin(eyeOffsetAngle) * eyeDistance, eyeRadius, 0, Math.PI * 2); ctx.fill();
 
-    // Pupils
     ctx.fillStyle = '#000';
     ctx.beginPath(); ctx.arc(Math.cos(-eyeOffsetAngle) * eyeDistance + radius*0.1, Math.sin(-eyeOffsetAngle) * eyeDistance, eyeRadius*0.5, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(Math.cos(eyeOffsetAngle) * eyeDistance + radius*0.1, Math.sin(eyeOffsetAngle) * eyeDistance, eyeRadius*0.5, 0, Math.PI * 2); ctx.fill();
@@ -162,7 +150,10 @@ function draw() {
         ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
     });
 
-    currentState.zombies.forEach(z => drawFace(z.x, z.y, z.radius, z.angle, '#2ecc71', '#FF3333'));
+    // UPDATED: Now dynamically passes the z.color from the server!
+    currentState.zombies.forEach(z => {
+        drawFace(z.x, z.y, z.radius, z.angle, z.color || '#2ecc71', '#FF3333');
+    });
 
     for (const id in currentState.players) {
         const p = currentState.players[id];
@@ -196,7 +187,6 @@ function draw() {
 
     ctx.restore(); 
 
-    // --- HUD LAYER ---
     const hudX = 20;
     const hudY = canvas.height - 180; 
 

@@ -18,7 +18,6 @@ state = {
 }
 connected_clients = set()
 
-# Generate random trees
 for _ in range(30):
     while True:
         tx = random.uniform(100, ARENA_SIZE - 100)
@@ -66,7 +65,9 @@ async def game_loop():
             for pid, p in state["players"].items():
                 if math.hypot(z["x"] - p["x"], z["y"] - p["y"]) < z["radius"] + p["radius"]:
                     if current_time > p["iframeUntil"]:
-                        damage_taken = 10
+                        # Tanks do more damage, runners do less!
+                        damage_taken = 25 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
+                        
                         state["damage_indicators"].append({
                             "x": p["x"], "y": p["y"], "dmg": damage_taken, "expires": current_time + 0.5, "color": "#e74c3c"
                         })
@@ -93,8 +94,11 @@ async def game_loop():
                     if b in state["bullets"]: state["bullets"].remove(b) 
                     if z["health"] <= 0: 
                         if z in state["zombies"]: state["zombies"].remove(z)
+                        
+                        # Award points based on zombie type
+                        points = 30 if z.get("type") == "tank" else (5 if z.get("type") == "runner" else 10)
                         if b["ownerId"] in state["players"]:
-                            state["players"][b["ownerId"]]["score"] += 10
+                            state["players"][b["ownerId"]]["score"] += points
                     break 
 
         if connected_clients:
@@ -106,11 +110,31 @@ async def game_loop():
 async def spawner():
     while True:
         if len(state["zombies"]) < 15: 
+            # Weighted random choice: 60% standard, 30% runner, 10% tank
+            z_type = random.choices(["standard", "runner", "tank"], weights=[60, 30, 10])[0]
+            
+            if z_type == "runner":
+                z_radius = 10
+                z_speed = random.uniform(4.5, 6.0)
+                z_health = 10
+                z_color = "#f39c12" # Orange
+            elif z_type == "tank":
+                z_radius = 35
+                z_speed = random.uniform(0.8, 1.5)
+                z_health = 100
+                z_color = "#2c3e50" # Dark Grey
+            else:
+                z_radius = 15
+                z_speed = random.uniform(1.5, 3.0)
+                z_health = 30
+                z_color = "#2ecc71" # Normal Green
+
             state["zombies"].append({
                 "x": 0 if random.random() < 0.5 else ARENA_SIZE, "y": random.uniform(0, ARENA_SIZE),
-                "radius": 15, "speed": random.uniform(1.5, 3.0), "angle": 0, "health": 30
+                "radius": z_radius, "speed": z_speed, "angle": 0, "health": z_health, 
+                "color": z_color, "type": z_type
             })
-        await asyncio.sleep(3)
+        await asyncio.sleep(2) # Spawns slightly faster now!
 
 async def handler(websocket):
     client_id = str(uuid.uuid4())
@@ -121,7 +145,7 @@ async def handler(websocket):
         "radius": 15, "color": f"hsl({random.randint(0, 360)}, 100%, 50%)", "score": 0,
         "health": 100, "shields": 50, 
         "iframeUntil": 0, "aimAngle": 0, 
-        "currentWeapon": "fists" # NEW: Spawn with fists
+        "currentWeapon": "fists" 
     }
     
     await websocket.send(json.dumps({"type": "init", "id": client_id}))
@@ -135,8 +159,6 @@ async def handler(websocket):
                 p["aimAngle"] = data["aimAngle"] 
                 p["currentWeapon"] = data.get("weapon", "fists") 
                 
-                # NEW: Speed Modifier Logic!
-                # 6.0 is base speed. 6.0 * 1.3 = 7.8 (30% faster)
                 speed = 7.8 if p["currentWeapon"] == "fists" else 6.0
                 
                 if data["up"]: p["y"] -= speed
@@ -154,7 +176,6 @@ async def handler(websocket):
                 weapon = data["weapon"]
                 p = state["players"][client_id]
                 
-                # Notice we just ignore "fists" here so clicking does nothing/doesn't spawn bullets
                 if weapon == "pistol":
                     state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 15, "vy": math.sin(angle) * 15, "ownerId": client_id, "radius": 5, "damage": 10})
                 elif weapon == "ar":
