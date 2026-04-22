@@ -11,18 +11,18 @@ let myId = null;
 let serverTime = 0; 
 let mouseX = 0, mouseY = 0; 
 
-const WEAPONS = ['fists', 'pistol', 'ar', 'shotgun', 'sniper'];
-const WEAPON_NAMES = ['Fists', 'Pistol', 'AR', 'Shotgun', 'Sniper'];
+// NEW: Dynamic Inventory Arrays!
+let WEAPONS = ['fists', null, null, null, null];
+let WEAPON_RARITIES = ['common', null, null, null, null];
 let currentWeaponIndex = 0; 
 
-// --- NEW: Rarity Color Map ---
 const RARITY_COLORS = {
-    common: '#bdc3c7',     // Gray
-    uncommon: '#2ecc71',   // Green
-    rare: '#3498db',       // Blue
-    epic: '#9b59b6',       // Purple
-    legendary: '#f1c40f',  // Gold
-    mythic: '#e74c3c'      // Red
+    common: '#bdc3c7',     
+    uncommon: '#2ecc71',   
+    rare: '#3498db',       
+    epic: '#9b59b6',       
+    legendary: '#f1c40f',  
+    mythic: '#e74c3c'      
 };
 
 let isMouseDown = false;
@@ -31,13 +31,46 @@ const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 150
 
 const socket = new WebSocket('ws://localhost:8000');
 socket.onopen = () => { loadingOverlay.classList.add('hidden'); };
+
 socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
-    if (msg.type === 'init') { myId = msg.id; } 
+    if (msg.type === 'init') { 
+        myId = msg.id; 
+    } 
     else if (msg.type === 'state') {
         currentState = msg.data;
         serverTime = msg.time;
         if (currentState.players[myId]) scoreDisplay.innerText = currentState.players[myId].score;
+    }
+    // NEW: Handle Picking up an item!
+    else if (msg.type === 'pickup') {
+        let slot = currentWeaponIndex;
+        
+        // If holding fists, try to find the first empty slot to put it in
+        if (slot === 0) {
+            for (let i = 1; i < 5; i++) {
+                if (!WEAPONS[i]) { 
+                    slot = i; 
+                    break; 
+                }
+            }
+            // If the inventory is completely full, force replace slot 1
+            if (slot === 0) slot = 1; 
+        }
+
+        // If we are replacing a gun we already have, drop the old one first
+        if (WEAPONS[slot] && WEAPONS[slot] !== 'fists') {
+            socket.send(JSON.stringify({
+                type: 'drop',
+                weapon: WEAPONS[slot],
+                rarity: WEAPON_RARITIES[slot]
+            }));
+        }
+
+        // Equip the new gun
+        WEAPONS[slot] = msg.weapon;
+        WEAPON_RARITIES[slot] = msg.rarity;
+        currentWeaponIndex = slot; 
     }
 };
 
@@ -52,6 +85,13 @@ window.addEventListener('keydown', (e) => {
     if (k === '3') currentWeaponIndex = 2;
     if (k === '4') currentWeaponIndex = 3;
     if (k === '5') currentWeaponIndex = 4;
+
+    // NEW: Pickup Key!
+    if (k === 'e') {
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'interact' }));
+        }
+    }
 });
 window.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
@@ -79,6 +119,10 @@ setInterval(() => {
     if (isMouseDown && socket.readyState === WebSocket.OPEN && currentState.players[myId]) {
         const now = Date.now();
         const currentWeaponType = WEAPONS[currentWeaponIndex];
+        
+        // Can't shoot empty slots or fists
+        if (!currentWeaponType || currentWeaponType === 'fists') return;
+
         if (now - lastShotTime >= FIRE_RATES[currentWeaponType]) {
             const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
             socket.send(JSON.stringify({ type: 'shoot', angle: angle, weapon: currentWeaponType }));
@@ -87,6 +131,13 @@ setInterval(() => {
         }
     }
 }, 1000 / 60);
+
+// Helper function to capitalize weapon names for the UI
+function getWeaponName(w) {
+    if (!w) return "";
+    if (w === 'ar') return 'AR';
+    return w.charAt(0).toUpperCase() + w.slice(1);
+}
 
 function drawWeaponIcon(ctx, type) {
     if (type === 'fists') {
@@ -111,23 +162,18 @@ function drawWeaponIcon(ctx, type) {
     }
 }
 
-// UPDATED: Now receives a rarity property and uses globalAlpha for a cleaner glow
 function drawItem(x, y, type, rarity) {
     ctx.save();
     ctx.translate(x, y);
     
     let glowColor = RARITY_COLORS[rarity] || '#FFF';
 
-    // Glowing aura circle
     ctx.beginPath();
     ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    
-    // Fill with low opacity
     ctx.globalAlpha = 0.2;
     ctx.fillStyle = glowColor;
     ctx.fill();
     
-    // Stroke with full opacity
     ctx.globalAlpha = 1.0;
     ctx.strokeStyle = glowColor;
     ctx.lineWidth = 2;
@@ -196,7 +242,6 @@ function draw() {
     }
     ctx.strokeStyle = '#FF0000'; ctx.lineWidth = 5; ctx.strokeRect(0, 0, 2000, 2000);
 
-    // Pass item rarity up!
     if (currentState.items) {
         currentState.items.forEach(item => {
             drawItem(item.x, item.y, item.type, item.rarity);
@@ -276,24 +321,31 @@ function draw() {
     const slotSpacing = 10;
     const itemsY = healthY + barHeight + 15; 
 
-    ctx.lineWidth = 2;
     ctx.font = 'bold 10px sans-serif';
 
+    // --- UPDATED: Dynamic Inventory Rendering ---
     for (let i = 0; i < 5; i++) {
         let x = hudX + (slotSize + slotSpacing) * i;
         
+        let slotWeapon = WEAPONS[i];
+        let slotRarity = WEAPON_RARITIES[i];
+        
+        // Define the color based on if there is a weapon and its rarity
+        let baseColor = (slotWeapon && slotWeapon !== 'fists') ? RARITY_COLORS[slotRarity] : '#FFF';
+        
         if (i === currentWeaponIndex) {
-            ctx.fillStyle = 'rgba(255, 215, 0, 0.5)'; 
-            ctx.strokeStyle = '#FFD700'; 
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; 
+            ctx.strokeStyle = baseColor; 
+            ctx.lineWidth = 4;
         } else {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; 
-            ctx.strokeStyle = '#FFF'; 
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; 
+            ctx.strokeStyle = baseColor; 
+            ctx.lineWidth = 2;
         }
 
         ctx.fillRect(x, itemsY, slotSize, slotSize);
         ctx.strokeRect(x, itemsY, slotSize, slotSize);
 
-        let slotWeapon = WEAPONS[i];
         if (slotWeapon) {
             ctx.save();
             ctx.translate(x + slotSize / 2, itemsY + slotSize / 2 - 5);
@@ -305,10 +357,8 @@ function draw() {
         ctx.textAlign = 'left';
         ctx.fillText(i + 1, x + 5, itemsY + 12);
         
-        if (i < WEAPON_NAMES.length) {
-            ctx.textAlign = 'center';
-            ctx.fillText(WEAPON_NAMES[i], x + slotSize/2, itemsY + slotSize - 3);
-        }
+        ctx.textAlign = 'center';
+        ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 3);
     }
     ctx.textAlign = 'left';
 

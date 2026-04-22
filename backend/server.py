@@ -30,8 +30,6 @@ for _ in range(30):
             state["trees"].append({"x": tx, "y": ty, "radius": tradius})
             break 
 
-# --- NEW: WEAPON RARITIES & WEIGHTS ---
-# Common (50%), Uncommon (25%), Rare (15%), Epic (8%), Legendary (1.9%), Mythic (0.1%)
 RARITY_CHOICES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
 RARITY_WEIGHTS = [50, 25, 15, 8, 1.9, 0.1]
 
@@ -44,7 +42,7 @@ for i, w_type in enumerate(test_weapons):
         "x": ARENA_SIZE / 2 + offsets[i][0],
         "y": ARENA_SIZE / 2 + offsets[i][1],
         "type": w_type,
-        "rarity": chosen_rarity, # Attach rarity to the item!
+        "rarity": chosen_rarity,
         "radius": 15
     })
 
@@ -162,16 +160,28 @@ async def handler(websocket):
     try:
         async for message in websocket:
             data = json.loads(message)
+            
             if data["type"] == "move":
                 p = state["players"][client_id]
+                old_x, old_y = p["x"], p["y"]
                 p["aimAngle"] = data["aimAngle"] 
                 p["currentWeapon"] = data.get("weapon", "fists") 
-                speed = 7.8 if p["currentWeapon"] == "fists" else 6.0
                 
-                if data["up"]: p["y"] -= speed
-                if data["down"]: p["y"] += speed
-                if data["left"]: p["x"] -= speed
-                if data["right"]: p["x"] += speed
+                # UPDATED: Base speed increased!
+                speed = 9.1 if p["currentWeapon"] == "fists" else 7.0
+                
+                dx, dy = 0, 0
+                if data["up"]: dy -= 1
+                if data["down"]: dy += 1
+                if data["left"]: dx -= 1
+                if data["right"]: dx += 1
+                
+                # NEW: Normalize diagonal movement vector
+                if dx != 0 or dy != 0:
+                    length = math.hypot(dx, dy)
+                    p["x"] += (dx / length) * speed
+                    p["y"] += (dy / length) * speed
+                
                 p["x"] = max(0, min(ARENA_SIZE, p["x"]))
                 p["y"] = max(0, min(ARENA_SIZE, p["y"]))
                 
@@ -184,6 +194,40 @@ async def handler(websocket):
                         p["x"] += math.cos(push_angle) * overlap
                         p["y"] += math.sin(push_angle) * overlap
             
+            # NEW: Handle Picking up items
+            elif data["type"] == "interact":
+                p = state["players"][client_id]
+                closest_item = None
+                min_dist = float('inf')
+                
+                # Find the nearest item within 40 pixels
+                for item in state["items"]:
+                    dist = math.hypot(p["x"] - item["x"], p["y"] - item["y"])
+                    if dist < p["radius"] + item["radius"] + 25: 
+                        if dist < min_dist:
+                            min_dist = dist
+                            closest_item = item
+                
+                if closest_item:
+                    state["items"].remove(closest_item)
+                    # Send specific message directly to the player who picked it up
+                    await websocket.send(json.dumps({
+                        "type": "pickup", 
+                        "weapon": closest_item["type"], 
+                        "rarity": closest_item["rarity"]
+                    }))
+                    
+            # NEW: Handle Dropping items
+            elif data["type"] == "drop":
+                p = state["players"][client_id]
+                state["items"].append({
+                    "id": str(uuid.uuid4()),
+                    "x": p["x"], "y": p["y"],
+                    "type": data["weapon"],
+                    "rarity": data["rarity"],
+                    "radius": 15
+                })
+
             elif data["type"] == "shoot":
                 angle = data["angle"]
                 weapon = data["weapon"]
@@ -196,8 +240,6 @@ async def handler(websocket):
                         spread_angle = angle + random.uniform(-0.25, 0.25)
                         bullet_speed = random.uniform(12, 16)
                         state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(spread_angle) * bullet_speed, "vy": math.sin(spread_angle) * bullet_speed, "ownerId": client_id, "radius": 3, "damage": 6})
-                
-                # UPDATED: Sniper radius dropped from 8 to 5
                 elif weapon == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(angle) * 35, "vy": math.sin(angle) * 35, "ownerId": client_id, "radius": 5, "damage": 50})
     except websockets.exceptions.ConnectionClosed: pass
     finally:
