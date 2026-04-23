@@ -6,15 +6,18 @@ const loadingOverlay = document.getElementById('loadingOverlay');
 canvas.width = 800;
 canvas.height = 800;
 
-let currentState = { players: {}, bullets: [], zombies: [], trees: [], damage_indicators: [], items: [] };
+let currentState = { players: {}, bullets: [], zombies: [], trees: [], damage_indicators: [], items: [], loot_boxes: [] };
 let myId = null;
 let serverTime = 0; 
 let mouseX = 0, mouseY = 0; 
 
-// NEW: Dynamic Inventory Arrays!
 let WEAPONS = ['fists', null, null, null, null];
 let WEAPON_RARITIES = ['common', null, null, null, null];
 let currentWeaponIndex = 0; 
+
+// NEW: Drag and Drop State Variables
+let isDragging = false;
+let draggedSlot = -1;
 
 const RARITY_COLORS = {
     common: '#bdc3c7',     
@@ -42,35 +45,26 @@ socket.onmessage = (event) => {
         serverTime = msg.time;
         if (currentState.players[myId]) scoreDisplay.innerText = currentState.players[myId].score;
     }
-    // NEW: Handle Picking up an item!
     else if (msg.type === 'pickup') {
-        let slot = currentWeaponIndex;
-        
-        // If holding fists, try to find the first empty slot to put it in
-        if (slot === 0) {
-            for (let i = 1; i < 5; i++) {
-                if (!WEAPONS[i]) { 
-                    slot = i; 
-                    break; 
-                }
-            }
-            // If the inventory is completely full, force replace slot 1
-            if (slot === 0) slot = 1; 
+        let emptySlot = -1;
+        // Search for an empty space
+        for (let i = 1; i < 5; i++) {
+            if (!WEAPONS[i]) { emptySlot = i; break; }
         }
 
-        // If we are replacing a gun we already have, drop the old one first
-        if (WEAPONS[slot] && WEAPONS[slot] !== 'fists') {
-            socket.send(JSON.stringify({
-                type: 'drop',
-                weapon: WEAPONS[slot],
-                rarity: WEAPON_RARITIES[slot]
-            }));
-        }
+        if (emptySlot !== -1) {
+            // Put it in the empty slot, DON'T switch to it
+            WEAPONS[emptySlot] = msg.weapon;
+            WEAPON_RARITIES[emptySlot] = msg.rarity;
+        } else {
+            // Inventory is full, swap out the currently held weapon
+            let slotToReplace = currentWeaponIndex;
+            if (slotToReplace === 0) slotToReplace = 1; // Can't replace fists
 
-        // Equip the new gun
-        WEAPONS[slot] = msg.weapon;
-        WEAPON_RARITIES[slot] = msg.rarity;
-        currentWeaponIndex = slot; 
+            socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[slotToReplace], rarity: WEAPON_RARITIES[slotToReplace] }));
+            WEAPONS[slotToReplace] = msg.weapon;
+            WEAPON_RARITIES[slotToReplace] = msg.rarity;
+        }
     }
 };
 
@@ -86,11 +80,8 @@ window.addEventListener('keydown', (e) => {
     if (k === '4') currentWeaponIndex = 3;
     if (k === '5') currentWeaponIndex = 4;
 
-    // NEW: Pickup Key!
     if (k === 'e') {
-        if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: 'interact' }));
-        }
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'interact' }));
     }
 });
 window.addEventListener('keyup', (e) => {
@@ -105,8 +96,76 @@ canvas.addEventListener('mousemove', (e) => {
     mouseY = e.clientY - rect.top;
 });
 
-canvas.addEventListener('mousedown', () => isMouseDown = true);
-window.addEventListener('mouseup', () => isMouseDown = false); 
+// NEW: Advanced Mouse Down Logic for Dragging!
+canvas.addEventListener('mousedown', () => {
+    const hudX = 20;
+    const hudY = canvas.height - 180;
+    const itemsY = hudY + 25 + 5 + 25 + 15; // Calculated Y position of inventory squares
+    const slotSize = 40;
+    const slotSpacing = 10;
+
+    let clickedSlot = -1;
+    for (let i = 1; i < 5; i++) { // Skip fists (0)
+        let x = hudX + (slotSize + slotSpacing) * i;
+        if (mouseX >= x && mouseX <= x + slotSize && mouseY >= itemsY && mouseY <= itemsY + slotSize) {
+            clickedSlot = i;
+            break;
+        }
+    }
+
+    if (clickedSlot !== -1 && WEAPONS[clickedSlot]) {
+        isDragging = true;
+        draggedSlot = clickedSlot;
+    } else {
+        isMouseDown = true; // Just normal shooting
+    }
+});
+
+// NEW: Advanced Mouse Up Logic for Dropping/Swapping!
+window.addEventListener('mouseup', () => {
+    if (isDragging) {
+        const hudX = 20;
+        const itemsY = canvas.height - 180 + 25 + 5 + 25 + 15;
+        const slotSize = 40;
+        const slotSpacing = 10;
+
+        let droppedOnSlot = -1;
+        for (let i = 1; i < 5; i++) {
+            let x = hudX + (slotSize + slotSpacing) * i;
+            if (mouseX >= x && mouseX <= x + slotSize && mouseY >= itemsY && mouseY <= itemsY + slotSize) {
+                droppedOnSlot = i;
+                break;
+            }
+        }
+
+        if (droppedOnSlot !== -1) {
+            // Swap slots internally
+            let tempW = WEAPONS[droppedOnSlot];
+            let tempR = WEAPON_RARITIES[droppedOnSlot];
+            WEAPONS[droppedOnSlot] = WEAPONS[draggedSlot];
+            WEAPON_RARITIES[droppedOnSlot] = WEAPON_RARITIES[draggedSlot];
+            WEAPONS[draggedSlot] = tempW;
+            WEAPON_RARITIES[draggedSlot] = tempR;
+            
+            // If we moved our currently selected weapon, follow it
+            if (currentWeaponIndex === draggedSlot) currentWeaponIndex = droppedOnSlot;
+            else if (currentWeaponIndex === droppedOnSlot) currentWeaponIndex = draggedSlot;
+            
+        } else {
+            // Check if dropped outside the inventory box
+            const inventoryWidth = (slotSize + slotSpacing) * 5;
+            if (mouseX > hudX + inventoryWidth || mouseY < itemsY || mouseY > itemsY + slotSize) {
+                socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[draggedSlot], rarity: WEAPON_RARITIES[draggedSlot] }));
+                WEAPONS[draggedSlot] = null;
+                WEAPON_RARITIES[draggedSlot] = null;
+                if (currentWeaponIndex === draggedSlot) currentWeaponIndex = 0; // Fall back to fists
+            }
+        }
+        isDragging = false;
+        draggedSlot = -1;
+    }
+    isMouseDown = false;
+}); 
 
 setInterval(() => {
     if (socket.readyState === WebSocket.OPEN && currentState.players[myId]) {
@@ -120,19 +179,22 @@ setInterval(() => {
         const now = Date.now();
         const currentWeaponType = WEAPONS[currentWeaponIndex];
         
-        // Can't shoot empty slots or fists
         if (!currentWeaponType || currentWeaponType === 'fists') return;
 
         if (now - lastShotTime >= FIRE_RATES[currentWeaponType]) {
             const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
-            socket.send(JSON.stringify({ type: 'shoot', angle: angle, weapon: currentWeaponType }));
+            socket.send(JSON.stringify({ 
+                type: 'shoot', 
+                angle: angle, 
+                weapon: currentWeaponType,
+                rarity: WEAPON_RARITIES[currentWeaponIndex]
+            }));
             lastShotTime = now;
             if (currentWeaponType === 'pistol') isMouseDown = false; 
         }
     }
 }, 1000 / 60);
 
-// Helper function to capitalize weapon names for the UI
 function getWeaponName(w) {
     if (!w) return "";
     if (w === 'ar') return 'AR';
@@ -142,27 +204,24 @@ function getWeaponName(w) {
 function drawLootBox(box) {
     ctx.save();
     ctx.translate(box.x, box.y);
-    
-    // Box Shadow/Base
     ctx.fillStyle = box.type === 'chest' ? '#d4af37' : '#8b4513';
     ctx.fillRect(-box.radius, -box.radius, box.radius*2, box.radius*2);
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
     ctx.strokeRect(-box.radius, -box.radius, box.radius*2, box.radius*2);
-
-    // Detail lines
     ctx.beginPath();
     ctx.moveTo(-box.radius, -box.radius); ctx.lineTo(box.radius, box.radius);
     ctx.moveTo(box.radius, -box.radius); ctx.lineTo(-box.radius, box.radius);
     ctx.stroke();
 
-    // Interaction Prompt
-    const dist = Math.hypot(currentState.players[myId].x - box.x, currentState.players[myId].y - box.y);
-    if (dist < 60) {
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('[E] OPEN', 0, -box.radius - 10);
+    if (currentState.players[myId]) {
+        const dist = Math.hypot(currentState.players[myId].x - box.x, currentState.players[myId].y - box.y);
+        if (dist < 60) {
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('[E] OPEN', 0, -box.radius - 10);
+        }
     }
     ctx.restore();
 }
@@ -193,22 +252,11 @@ function drawWeaponIcon(ctx, type) {
 function drawItem(x, y, type, rarity) {
     ctx.save();
     ctx.translate(x, y);
-    
     let glowColor = RARITY_COLORS[rarity] || '#FFF';
-
-    ctx.beginPath();
-    ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.globalAlpha = 0.2;
-    ctx.fillStyle = glowColor;
-    ctx.fill();
-    
-    ctx.globalAlpha = 1.0;
-    ctx.strokeStyle = glowColor;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
+    ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.2; ctx.fillStyle = glowColor; ctx.fill();
+    ctx.globalAlpha = 1.0; ctx.strokeStyle = glowColor; ctx.lineWidth = 2; ctx.stroke();
     drawWeaponIcon(ctx, type);
-    
     ctx.restore();
 }
 
@@ -218,17 +266,10 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
     ctx.rotate(angle);
 
     if (weaponType && weaponType !== 'fists') {
-        if (weaponType === 'pistol') {
-            ctx.fillStyle = '#95a5a6'; ctx.fillRect(radius - 5, 2, 14, 4);
-        } else if (weaponType === 'ar') {
-            ctx.fillStyle = '#34495e'; ctx.fillRect(radius - 5, 2, 24, 5);
-        } else if (weaponType === 'shotgun') {
-            ctx.fillStyle = '#8b4513'; ctx.fillRect(radius - 5, 1, 10, 6); 
-            ctx.fillStyle = '#7f8c8d'; ctx.fillRect(radius + 5, 2, 16, 4); 
-        } else if (weaponType === 'sniper') {
-            ctx.fillStyle = '#27ae60'; ctx.fillRect(radius - 5, 2, 20, 6); 
-            ctx.fillStyle = '#111'; ctx.fillRect(radius + 15, 3, 18, 3); 
-        }
+        if (weaponType === 'pistol') { ctx.fillStyle = '#95a5a6'; ctx.fillRect(radius - 5, 2, 14, 4); } 
+        else if (weaponType === 'ar') { ctx.fillStyle = '#34495e'; ctx.fillRect(radius - 5, 2, 24, 5); } 
+        else if (weaponType === 'shotgun') { ctx.fillStyle = '#8b4513'; ctx.fillRect(radius - 5, 1, 10, 6); ctx.fillStyle = '#7f8c8d'; ctx.fillRect(radius + 5, 2, 16, 4); } 
+        else if (weaponType === 'sniper') { ctx.fillStyle = '#27ae60'; ctx.fillRect(radius - 5, 2, 20, 6); ctx.fillStyle = '#111'; ctx.fillRect(radius + 15, 3, 18, 3); }
     }
 
     ctx.fillStyle = colorMain;
@@ -242,9 +283,7 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
         ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
     }
 
-    const eyeRadius = radius * 0.3;
-    const eyeOffsetAngle = 0.6; 
-    const eyeDistance = radius * 0.6;
+    const eyeRadius = radius * 0.3; const eyeOffsetAngle = 0.6; const eyeDistance = radius * 0.6;
     ctx.fillStyle = colorSecondary; 
     ctx.beginPath(); ctx.arc(Math.cos(-eyeOffsetAngle) * eyeDistance, Math.sin(-eyeOffsetAngle) * eyeDistance, eyeRadius, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(Math.cos(eyeOffsetAngle) * eyeDistance, Math.sin(eyeOffsetAngle) * eyeDistance, eyeRadius, 0, Math.PI * 2); ctx.fill();
@@ -270,21 +309,16 @@ function draw() {
     }
     ctx.strokeStyle = '#FF0000'; ctx.lineWidth = 5; ctx.strokeRect(0, 0, 2000, 2000);
 
-    // Draw Loot Boxes
     if (currentState.loot_boxes) {
         currentState.loot_boxes.forEach(box => drawLootBox(box));
     }
 
-    // Draw Items
     if (currentState.items) {
         currentState.items.forEach(item => {
             drawItem(item.x, item.y, item.type, item.rarity);
-            // Prompt for items too
-            const dist = Math.hypot(currentState.players[myId].x - item.x, currentState.players[myId].y - item.y);
+            const dist = Math.hypot(myPlayer.x - item.x, myPlayer.y - item.y);
             if (dist < 50) {
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 12px Arial';
-                ctx.textAlign = 'center';
+                ctx.fillStyle = 'white'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
                 ctx.fillText('[E] PICKUP', item.x, item.y - 25);
             }
         });
@@ -299,13 +333,8 @@ function draw() {
     }
 
     ctx.fillStyle = '#000';
-    currentState.bullets.forEach(b => {
-        ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
-    });
-
-    currentState.zombies.forEach(z => {
-        drawFace(z.x, z.y, z.radius, z.angle, z.color || '#2ecc71', '#FF3333');
-    });
+    currentState.bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill(); });
+    currentState.zombies.forEach(z => drawFace(z.x, z.y, z.radius, z.angle, z.color || '#2ecc71', '#FF3333'));
 
     for (const id in currentState.players) {
         const p = currentState.players[id];
@@ -315,9 +344,7 @@ function draw() {
             let flickerAlpha = 0.3 + Math.abs(Math.cos(serverTime * 20)) * 0.7; 
             drawColor = p.color.replace('hsl', 'hsla').replace(')', `, ${flickerAlpha})`);
         }
-
         drawFace(p.x, p.y, p.radius, p.aimAngle, drawColor, '#FFFFFF', p.currentWeapon);
-        
         if (id === myId) {
             ctx.lineWidth = 3; ctx.strokeStyle = '#FFF';
             ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 2, 0, Math.PI * 2); ctx.stroke();
@@ -332,76 +359,62 @@ function draw() {
             ctx.fillStyle = d.color;
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 3;
-            ctx.strokeText(d.dmg, d.x - 5, driftY);
-            ctx.fillText(d.dmg, d.x - 5, driftY);
+            ctx.strokeText(Math.round(d.dmg), d.x - 5, driftY);
+            ctx.fillText(Math.round(d.dmg), d.x - 5, driftY);
         });
     }
 
     ctx.restore(); 
 
-    const hudX = 20;
-    const hudY = canvas.height - 180; 
-
-    const barWidth = 200;
-    const barHeight = 25;
+    const hudX = 20; const hudY = canvas.height - 180; 
+    const barWidth = 200; const barHeight = 25;
+    
     ctx.fillStyle = '#444'; ctx.fillRect(hudX, hudY, barWidth, barHeight);
-    ctx.fillStyle = '#3498db'; 
-    let shieldPercent = myPlayer.shields / 100;
-    ctx.fillRect(hudX, hudY, barWidth * shieldPercent, barHeight);
+    ctx.fillStyle = '#3498db'; ctx.fillRect(hudX, hudY, barWidth * (myPlayer.shields/100), barHeight);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(`${myPlayer.shields} / 100 SHIELD`, hudX + 10, hudY + 18);
+    ctx.fillText(`${Math.round(myPlayer.shields)} / 100 SHIELD`, hudX + 10, hudY + 18);
 
     const healthY = hudY + barHeight + 5;
     ctx.fillStyle = '#444'; ctx.fillRect(hudX, healthY, barWidth, barHeight);
-    ctx.fillStyle = '#e74c3c';
-    let currentHealthPercent = myPlayer.health / 100;
-    ctx.fillRect(hudX, healthY, barWidth * currentHealthPercent, barHeight);
-    ctx.fillStyle = '#FFF'; 
-    ctx.fillText(`${myPlayer.health} / 100 HP`, hudX + 10, healthY + 18);
+    ctx.fillStyle = '#e74c3c'; ctx.fillRect(hudX, healthY, barWidth * (myPlayer.health/100), barHeight);
+    ctx.fillStyle = '#FFF'; ctx.fillText(`${Math.round(myPlayer.health)} / 100 HP`, hudX + 10, healthY + 18);
 
-    const slotSize = 40;
-    const slotSpacing = 10;
-    const itemsY = healthY + barHeight + 15; 
-
+    const slotSize = 40; const slotSpacing = 10; const itemsY = healthY + barHeight + 15; 
     ctx.font = 'bold 10px sans-serif';
 
-    // --- UPDATED: Dynamic Inventory Rendering ---
     for (let i = 0; i < 5; i++) {
         let x = hudX + (slotSize + slotSpacing) * i;
-        
-        let slotWeapon = WEAPONS[i];
-        let slotRarity = WEAPON_RARITIES[i];
-        
-        // Define the color based on if there is a weapon and its rarity
+        let slotWeapon = WEAPONS[i]; let slotRarity = WEAPON_RARITIES[i];
         let baseColor = (slotWeapon && slotWeapon !== 'fists') ? RARITY_COLORS[slotRarity] : '#FFF';
         
         if (i === currentWeaponIndex) {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; 
-            ctx.strokeStyle = baseColor; 
-            ctx.lineWidth = 4;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.strokeStyle = baseColor; ctx.lineWidth = 4;
         } else {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; 
-            ctx.strokeStyle = baseColor; 
-            ctx.lineWidth = 2;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; ctx.strokeStyle = baseColor; ctx.lineWidth = 2;
         }
 
-        ctx.fillRect(x, itemsY, slotSize, slotSize);
-        ctx.strokeRect(x, itemsY, slotSize, slotSize);
+        ctx.fillRect(x, itemsY, slotSize, slotSize); ctx.strokeRect(x, itemsY, slotSize, slotSize);
 
-        if (slotWeapon) {
-            ctx.save();
-            ctx.translate(x + slotSize / 2, itemsY + slotSize / 2 - 5);
-            drawWeaponIcon(ctx, slotWeapon);
-            ctx.restore();
+        // DO NOT draw the icon in the slot if it is currently being dragged!
+        if (slotWeapon && !(isDragging && draggedSlot === i)) {
+            ctx.save(); ctx.translate(x + slotSize / 2, itemsY + slotSize / 2 - 5);
+            drawWeaponIcon(ctx, slotWeapon); ctx.restore();
         }
 
-        ctx.fillStyle = '#FFF';
-        ctx.textAlign = 'left';
-        ctx.fillText(i + 1, x + 5, itemsY + 12);
-        
-        ctx.textAlign = 'center';
-        ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 3);
+        ctx.fillStyle = '#FFF'; ctx.textAlign = 'left'; ctx.fillText(i + 1, x + 5, itemsY + 12);
+        ctx.textAlign = 'center'; ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 3);
     }
+    
+    // NEW: Render the dragged item attached to the mouse!
+    if (isDragging && draggedSlot !== -1 && WEAPONS[draggedSlot]) {
+        ctx.save();
+        ctx.translate(mouseX, mouseY);
+        // Add a slight transparency so you know it's being dragged
+        ctx.globalAlpha = 0.8;
+        drawWeaponIcon(ctx, WEAPONS[draggedSlot]);
+        ctx.restore();
+    }
+    
     ctx.textAlign = 'left';
 
     requestAnimationFrame(draw);

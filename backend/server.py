@@ -15,15 +15,23 @@ state = {
     "zombies": [],
     "trees": [],
     "items": [],
-    "loot_boxes": [], # NEW: Chests and Crates
+    "loot_boxes": [], 
     "damage_indicators": []
 }
 connected_clients = set()
 
-# Rarity Logic
 RARITY_CHOICES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
 RARITY_WEIGHTS_CRATE = [70, 20, 8, 1.8, 0.2, 0.0]
 RARITY_WEIGHTS_CHEST = [10, 30, 40, 15, 4, 1.0]
+
+RARITY_MULTIPLIERS = {
+    "common": 1.0,
+    "uncommon": 1.2,
+    "rare": 1.5,
+    "epic": 1.8,
+    "legendary": 2.2,
+    "mythic": 2.8
+}
 
 def spawn_trees():
     for _ in range(30):
@@ -35,7 +43,6 @@ def spawn_trees():
                 break
 
 def spawn_loot():
-    # Spawn 15 Crates and 5 Chests initially
     for _ in range(15):
         state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": random.uniform(100, 1900), "y": random.uniform(100, 1900), "type": "crate", "radius": 20})
     for _ in range(5):
@@ -49,7 +56,6 @@ async def game_loop():
         current_time = time.time()
         state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
 
-        # 1. BULLET PHYSICS (With Substepping for High-Speed Snipers)
         for b in state["bullets"][:]:
             steps = 3 if math.hypot(b["vx"], b["vy"]) > 25 else 1
             hit_something = False
@@ -59,14 +65,12 @@ async def game_loop():
                 b["x"] += b["vx"] / steps
                 b["y"] += b["vy"] / steps
 
-                # Tree Collision
                 for t in state["trees"]:
                     if math.hypot(b["x"] - t["x"], b["y"] - t["y"]) < b["radius"] + t["radius"]:
                         if b in state["bullets"]: state["bullets"].remove(b)
                         hit_something = True; break
                 if hit_something: break
 
-                # PvP Collision
                 for pid, p in state["players"].items():
                     if pid != b["ownerId"] and math.hypot(b["x"] - p["x"], b["y"] - p["y"]) < b["radius"] + p["radius"]:
                         dmg = b["damage"]
@@ -81,7 +85,6 @@ async def game_loop():
                         break
                 if hit_something: break
 
-                # Zombie Collision
                 for z in state["zombies"][:]:
                     if math.hypot(b["x"] - z["x"], b["y"] - z["y"]) < b["radius"] + z["radius"]:
                         z["health"] -= b["damage"]
@@ -97,7 +100,6 @@ async def game_loop():
             if not hit_something and not (0 <= b["x"] <= ARENA_SIZE and 0 <= b["y"] <= ARENA_SIZE):
                 if b in state["bullets"]: state["bullets"].remove(b)
 
-        # 2. ZOMBIE AI (With Sliding)
         player_ids = list(state["players"].keys())
         for z in state["zombies"][:]:
             if player_ids:
@@ -156,7 +158,8 @@ async def handler(websocket):
             
             elif data["type"] == "interact":
                 p = state["players"][cid]
-                # Check Loot Boxes first
+                interacted = False # Prevent opening a box and picking up a gun in the same frame
+                
                 for box in state["loot_boxes"][:]:
                     if math.hypot(p["x"] - box["x"], p["y"] - box["y"]) < p["radius"] + box["radius"] + 20:
                         weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
@@ -168,26 +171,40 @@ async def handler(websocket):
                                 "rarity": random.choices(RARITY_CHOICES, weights=weights)[0], "radius": 15
                             })
                         state["loot_boxes"].remove(box)
+                        interacted = True
                         break
-                # Check Items
-                for item in state["items"][:]:
-                    if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
-                        await websocket.send(json.dumps({"type": "pickup", "weapon": item["type"], "rarity": item["rarity"]}))
-                        state["items"].remove(item); break
+                
+                if not interacted:
+                    for item in state["items"][:]:
+                        if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
+                            await websocket.send(json.dumps({"type": "pickup", "weapon": item["type"], "rarity": item["rarity"]}))
+                            state["items"].remove(item)
+                            break
             
             elif data["type"] == "drop":
                 state["items"].append({"id": str(uuid.uuid4()), "x": state["players"][cid]["x"], "y": state["players"][cid]["y"], "type": data["weapon"], "rarity": data["rarity"], "radius": 15})
             
             elif data["type"] == "shoot":
                 p = state["players"][cid]; a = data["angle"]; w = data["weapon"]
-                if w == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10})
-                elif w == "ar": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5})
+                
+                rarity = data.get("rarity", "common")
+                mult = RARITY_MULTIPLIERS.get(rarity, 1.0)
+                
+                if w == "pistol": 
+                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10 * mult})
+                elif w == "ar": 
+                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5 * mult})
                 elif w == "shotgun":
-                    for _ in range(5):
+                    pellet_count_map = {"common": 5, "uncommon": 6, "rare": 7, "epic": 8, "legendary": 10, "mythic": 12}
+                    pellets = pellet_count_map.get(rarity, 5)
+                    
+                    for _ in range(pellets):
                         sa = a + random.uniform(-0.25, 0.25)
                         sp = random.uniform(12, 16)
+                        # Shotgun damage stays flat at 6!
                         state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(sa)*sp, "vy": math.sin(sa)*sp, "ownerId": cid, "radius": 3, "damage": 6})
-                elif w == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50})
+                elif w == "sniper": 
+                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50 * mult})
 
     except websockets.exceptions.ConnectionClosed: pass
     finally: connected_clients.remove(websocket); del state["players"][cid]
