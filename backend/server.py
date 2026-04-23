@@ -47,22 +47,20 @@ def spawn_loot():
 spawn_trees()
 spawn_loot()
 
-# --- NEW: Continuous Loot Spawner ---
 async def loot_spawner():
     while True:
-        await asyncio.sleep(10) # Check every 10 seconds
+        await asyncio.sleep(10)
         crates = sum(1 for b in state["loot_boxes"] if b["type"] == "crate")
         chests = sum(1 for b in state["loot_boxes"] if b["type"] == "chest")
         
         if crates < 15 or chests < 5:
-            # Try to find a spot that is NOT near any player
             valid = False
-            for _ in range(10): # 10 attempts to find a valid spot
+            for _ in range(10):
                 tx = random.uniform(100, ARENA_SIZE-100)
                 ty = random.uniform(100, ARENA_SIZE-100)
                 too_close = False
                 for p in state["players"].values():
-                    if math.hypot(p["x"] - tx, p["y"] - ty) < 400: # Stay 400px away from players
+                    if math.hypot(p["x"] - tx, p["y"] - ty) < 400:
                         too_close = True
                         break
                 if not too_close:
@@ -104,9 +102,12 @@ async def game_loop():
                         else: p["health"] -= (dmg - p["shields"]); p["shields"] = 0
                         if b in state["bullets"]: state["bullets"].remove(b)
                         hit_something = True
+                        
                         if p["health"] <= 0 and pid not in dead_players:
                             dead_players.append(pid)
-                            if b["ownerId"] in state["players"]: state["players"][b["ownerId"]]["score"] += 100
+                            # --- UPDATED: STEAL SCORE ON KILL ---
+                            if b["ownerId"] in state["players"]: 
+                                state["players"][b["ownerId"]]["score"] += p["score"] + 100
                         break
                 if hit_something: break
 
@@ -155,6 +156,7 @@ async def game_loop():
         for pid in dead_players:
             if pid in state["players"]:
                 p = state["players"][pid]
+                final_score = p["score"] # Save score before deleting player
                 weps = p.get("weapons", [])
                 rars = p.get("rarities", [])
                 counts = p.get("counts", [])
@@ -172,7 +174,8 @@ async def game_loop():
                         })
                 
                 ws = connected_clients.get(pid)
-                if ws: asyncio.create_task(ws.send(json.dumps({"type": "dead"})))
+                # --- UPDATED: Send final score back to the client ---
+                if ws: asyncio.create_task(ws.send(json.dumps({"type": "dead", "score": final_score})))
                 del state["players"][pid]
 
         if connected_clients:
@@ -229,16 +232,13 @@ async def handler(websocket):
                 p = state["players"][cid]
                 interacted = False
                 
-                # Check Boxes
                 for box in state["loot_boxes"][:]:
                     if math.hypot(p["x"] - box["x"], p["y"] - box["y"]) < p["radius"] + box["radius"] + 20:
                         weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
                         count = random.randint(2, 3) if box["type"] == "chest" else random.randint(1, 2)
                         
                         for _ in range(count):
-                            # Incorporate Consumables!
                             typ = random.choice(["pistol", "ar", "shotgun", "sniper", "bandage", "medkit", "mini", "big"])
-                            
                             if typ in ["bandage", "medkit", "mini", "big"]:
                                 r = {"bandage": "common", "medkit": "rare", "mini": "uncommon", "big": "rare"}[typ]
                                 c = {"bandage": 5, "medkit": 1, "mini": 2, "big": 1}[typ]
@@ -255,7 +255,6 @@ async def handler(websocket):
                         interacted = True
                         break
                 
-                # Check Floor Items
                 if not interacted:
                     for item in state["items"][:]:
                         if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
@@ -274,14 +273,12 @@ async def handler(websocket):
                 if cid not in state["players"]: continue
                 p = state["players"][cid]; a = data["angle"]; w = data["weapon"]
                 
-                # --- NEW: Healing Logic ---
                 if w in ["bandage", "medkit", "mini", "big"]:
                     if w == "bandage" and p["health"] < 75: p["health"] = min(75, p["health"] + 15)
                     elif w == "medkit" and p["health"] < 100: p["health"] = min(100, p["health"] + 100)
                     elif w == "mini" and p["shields"] < 50: p["shields"] = min(50, p["shields"] + 25)
                     elif w == "big" and p["shields"] < 100: p["shields"] = min(100, p["shields"] + 50)
                 else:
-                    # Normal Weapons
                     rarity = data.get("rarity", "common")
                     mult = RARITY_MULTIPLIERS.get(rarity, 1.0)
                     if w == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10 * mult})
@@ -312,7 +309,7 @@ async def spawner():
 async def main():
     asyncio.create_task(game_loop())
     asyncio.create_task(spawner())
-    asyncio.create_task(loot_spawner()) # Launch the new map spawner!
+    asyncio.create_task(loot_spawner())
     async with websockets.serve(handler, "0.0.0.0", int(os.environ.get("PORT", 8000))): await asyncio.Future()
 
 if __name__ == "__main__": asyncio.run(main())

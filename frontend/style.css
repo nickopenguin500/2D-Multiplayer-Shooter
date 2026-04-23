@@ -19,7 +19,6 @@ canvas {
     color: black;
     z-index: 10;
 }
-/* New Overlay and Menu Styles */
 .overlay {
     position: absolute;
     top: 0; left: 0; width: 100%; height: 100%;
@@ -53,8 +52,16 @@ canvas {
 .menu-box button:hover { background-color: #2ecc71; }
 #helpBtn { background-color: #3498db; }
 #helpBtn:hover { background-color: #2980b9; }
-#closeHelpBtn { background-color: #e74c3c; margin-top: 15px; }
-#closeHelpBtn:hover { background-color: #c0392b; }
+
+/* NEW: About Button Styling */
+#aboutBtn { background-color: #f39c12; }
+#aboutBtn:hover { background-color: #f1c40f; }
+
+#closeHelpBtn, #closeAboutBtn { background-color: #e74c3c; margin-top: 15px; }
+#closeHelpBtn:hover, #closeAboutBtn:hover { background-color: #c0392b; }
+
+/* NEW: Score Display Styling */
+#lastScoreDisplay { color: #f1c40f; margin-bottom: 10px; }
 
 .hidden {
     display: none !important;

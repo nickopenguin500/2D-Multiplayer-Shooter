@@ -5,8 +5,10 @@ const scoreDisplay = document.getElementById('score');
 const loadingOverlay = document.getElementById('loadingOverlay');
 const menuOverlay = document.getElementById('menuOverlay');
 const helpModal = document.getElementById('helpModal');
+const aboutModal = document.getElementById('aboutModal'); // NEW
 const nameInput = document.getElementById('nameInput');
 const playBtn = document.getElementById('playBtn');
+const lastScoreDisplay = document.getElementById('lastScoreDisplay'); // NEW
 
 canvas.width = 800;
 canvas.height = 800;
@@ -36,6 +38,7 @@ const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 150
 let isMouseDown = false;
 let lastShotTime = 0;
 
+// IMPORTANT: Replace this with your Render WSS URL!
 const socket = new WebSocket('ws://localhost:8000');
 socket.onopen = () => { 
     loadingOverlay.classList.add('hidden'); 
@@ -64,11 +67,18 @@ playBtn.addEventListener('click', () => {
     
     socket.send(JSON.stringify({ type: 'spawn', name: name }));
     syncInventory();
+    
+    // Hide score display and menu when respawning
+    lastScoreDisplay.classList.add('hidden');
     menuOverlay.classList.add('hidden');
 });
 
+// --- NEW: Modal Listeners ---
 document.getElementById('helpBtn').addEventListener('click', () => helpModal.classList.remove('hidden'));
 document.getElementById('closeHelpBtn').addEventListener('click', () => helpModal.classList.add('hidden'));
+
+document.getElementById('aboutBtn').addEventListener('click', () => aboutModal.classList.remove('hidden'));
+document.getElementById('closeAboutBtn').addEventListener('click', () => aboutModal.classList.add('hidden'));
 
 socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
@@ -80,15 +90,17 @@ socket.onmessage = (event) => {
     }
     else if (msg.type === 'dead') {
         isDead = true;
+        // --- NEW: Update Score UI ---
+        lastScoreDisplay.innerText = `Final Score: ${msg.score}`;
+        lastScoreDisplay.classList.remove('hidden');
         menuOverlay.classList.remove('hidden');
     }
     else if (msg.type === 'pickup' && !isDead) {
         let type = msg.weapon;
         let count = msg.count || 1;
         let rarity = msg.rarity;
-        let originalCount = count; // Track original to check for partial absorption
+        let originalCount = count; 
 
-        // 1. Try to add to an existing stack first
         if (MAX_STACKS[type]) {
             for (let i = 1; i < 5; i++) {
                 if (WEAPONS[i] === type && COUNTS[i] < MAX_STACKS[type]) {
@@ -105,7 +117,6 @@ socket.onmessage = (event) => {
             }
         }
 
-        // 2. If we still have items left to pick up
         if (count > 0) {
             let emptySlot = -1;
             for (let i = 1; i < 5; i++) {
@@ -113,18 +124,13 @@ socket.onmessage = (event) => {
             }
 
             if (emptySlot !== -1) {
-                // Put in empty slot
                 WEAPONS[emptySlot] = type;
                 WEAPON_RARITIES[emptySlot] = rarity;
                 COUNTS[emptySlot] = count;
             } else {
-                // 3. Inventory is full. Check if we can SWAP!
                 let partiallyAbsorbed = (count !== originalCount);
-                
-                // Swap if we are holding a weapon/item (not fists) AND we didn't just split a stack
                 if (currentWeaponIndex !== 0 && !partiallyAbsorbed) {
                     let slotToReplace = currentWeaponIndex;
-                    
                     socket.send(JSON.stringify({ 
                         type: 'drop', 
                         weapon: WEAPONS[slotToReplace], 
@@ -136,7 +142,6 @@ socket.onmessage = (event) => {
                     WEAPON_RARITIES[slotToReplace] = rarity;
                     COUNTS[slotToReplace] = count;
                 } else {
-                    // Holding fists, or we already absorbed part of this item. Drop the rest back.
                     socket.send(JSON.stringify({ 
                         type: 'drop', 
                         weapon: type, 
@@ -181,7 +186,7 @@ canvas.addEventListener('mousedown', () => {
     if (isDead) return;
     const hudX = 20; const hudY = canvas.height - 180;
     const itemsY = hudY + 25 + 5 + 25 + 15; 
-    const slotSize = 40; const slotSpacing = 10;
+    const slotSize = 50; const slotSpacing = 10; 
 
     let clickedSlot = -1;
     for (let i = 1; i < 5; i++) { 
@@ -202,7 +207,7 @@ window.addEventListener('mouseup', () => {
     if (isDead) { isMouseDown = false; return; }
     if (isDragging) {
         const hudX = 20; const itemsY = canvas.height - 180 + 25 + 5 + 25 + 15;
-        const slotSize = 40; const slotSpacing = 10;
+        const slotSize = 50; const slotSpacing = 10; 
 
         let droppedOnSlot = -1;
         for (let i = 1; i < 5; i++) {
@@ -362,9 +367,7 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
     
     ctx.fillStyle = colorMain; ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
     
-    // --- UPDATED: Draw Consumables in hands ---
     if (weaponType === 'fists' || MAX_STACKS[weaponType]) {
-        
         if (MAX_STACKS[weaponType]) {
             if (weaponType === 'bandage') {
                 ctx.fillStyle = '#ecf0f1'; ctx.fillRect(radius, -6, 12, 12);
@@ -492,7 +495,7 @@ function draw() {
         ctx.fillStyle = '#e74c3c'; ctx.fillRect(hudX, healthY, barWidth * (myPlayer.health/100), barHeight);
         ctx.fillStyle = '#FFF'; ctx.fillText(`${Math.round(myPlayer.health)} / 100 HP`, hudX + 10, healthY + 18);
 
-        const slotSize = 40; const slotSpacing = 10; const itemsY = healthY + barHeight + 15; 
+        const slotSize = 50; const slotSpacing = 10; const itemsY = healthY + barHeight + 15; 
         ctx.font = 'bold 10px sans-serif';
 
         for (let i = 0; i < 5; i++) {
@@ -509,19 +512,21 @@ function draw() {
             ctx.fillRect(x, itemsY, slotSize, slotSize); ctx.strokeRect(x, itemsY, slotSize, slotSize);
 
             if (slotWeapon && !(isDragging && draggedSlot === i)) {
-                ctx.save(); ctx.translate(x + slotSize / 2, itemsY + slotSize / 2 - 5);
-                drawWeaponIcon(ctx, slotWeapon); ctx.restore();
+                ctx.save(); 
+                ctx.translate(x + slotSize / 2, itemsY + slotSize / 2 - 2);
+                drawWeaponIcon(ctx, slotWeapon); 
+                ctx.restore();
             }
 
-            ctx.fillStyle = '#FFF'; ctx.textAlign = 'left'; ctx.fillText(i + 1, x + 5, itemsY + 12);
+            ctx.fillStyle = '#FFF'; ctx.textAlign = 'left'; ctx.fillText(i + 1, x + 4, itemsY + 14);
             
             if (COUNTS[i] > 1 || MAX_STACKS[slotWeapon]) {
-                ctx.textAlign = 'right'; ctx.font = 'bold 12px sans-serif';
-                ctx.fillText('x' + COUNTS[i], x + slotSize - 2, itemsY + slotSize - 2);
+                ctx.textAlign = 'right'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#FFF';
+                ctx.fillText('x' + COUNTS[i], x + slotSize - 4, itemsY + 14);
             }
 
-            ctx.textAlign = 'center'; ctx.font = 'bold 10px sans-serif';
-            ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 3);
+            ctx.textAlign = 'center'; ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#FFF';
+            ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 4);
         }
         
         if (isDragging && draggedSlot !== -1 && WEAPONS[draggedSlot]) {

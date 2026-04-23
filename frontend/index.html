@@ -17,9 +17,11 @@
     <div id="menuOverlay" class="overlay hidden">
         <div class="menu-box">
             <h1>Zombs Arena</h1>
+            <h2 id="lastScoreDisplay" class="hidden">Final Score: 0</h2>
             <input type="text" id="nameInput" placeholder="Enter Name (max 12)" maxlength="12">
             <button id="playBtn">Play / Respawn</button>
             <button id="helpBtn">How to Play</button>
+            <button id="aboutBtn">About</button>
         </div>
     </div>
 
@@ -32,6 +34,15 @@
             <p><strong>E:</strong> Pick up item / Open chest</p>
             <p><strong>Drag & Drop:</strong> Swap items or drop them on the ground.</p>
             <button id="closeHelpBtn">Close</button>
+        </div>
+    </div>
+
+    <div id="aboutModal" class="overlay hidden">
+        <div class="menu-box">
+            <h2>About Zombs Arena</h2>
+            <p>Write your project description, class info, and credits here for your graders.</p>
+            <p>Built with Python WebSockets and HTML5 Canvas.</p>
+            <button id="closeAboutBtn">Close</button>
         </div>
     </div>
 
