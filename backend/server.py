@@ -29,11 +29,6 @@ RARITY_MULTIPLIERS = {
     "epic": 1.8, "legendary": 2.2, "mythic": 2.8
 }
 
-# --- NEW: AMMO CONFIGURATION ---
-AMMO_MAX = {"pistol": 15, "ar": 30, "shotgun": 5, "sniper": 1}
-AMMO_MAP = {"pistol": "ammo_light", "ar": "ammo_medium", "shotgun": "ammo_shotgun", "sniper": "ammo_heavy"}
-AMMO_SPAWN = {"ammo_light": 30, "ammo_medium": 30, "ammo_shotgun": 10, "ammo_heavy": 5}
-
 def spawn_trees():
     for _ in range(30):
         while True:
@@ -48,9 +43,6 @@ def spawn_loot():
         state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": random.uniform(100, 1900), "y": random.uniform(100, 1900), "type": "crate", "radius": 20})
     for _ in range(5):
         state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": random.uniform(100, 1900), "y": random.uniform(100, 1900), "type": "chest", "radius": 25})
-    # --- NEW: Ammo Crates! ---
-    for _ in range(10):
-        state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": random.uniform(100, 1900), "y": random.uniform(100, 1900), "type": "ammo_crate", "radius": 18})
 
 spawn_trees()
 spawn_loot()
@@ -60,9 +52,8 @@ async def loot_spawner():
         await asyncio.sleep(10)
         crates = sum(1 for b in state["loot_boxes"] if b["type"] == "crate")
         chests = sum(1 for b in state["loot_boxes"] if b["type"] == "chest")
-        ammo_crates = sum(1 for b in state["loot_boxes"] if b["type"] == "ammo_crate")
         
-        if crates < 15 or chests < 5 or ammo_crates < 10:
+        if crates < 15 or chests < 5:
             valid = False
             for _ in range(10):
                 tx = random.uniform(100, ARENA_SIZE-100)
@@ -81,8 +72,6 @@ async def loot_spawner():
                     state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": tx, "y": ty, "type": "crate", "radius": 20})
                 elif chests < 5:
                     state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": tx, "y": ty, "type": "chest", "radius": 25})
-                elif ammo_crates < 10:
-                    state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": tx, "y": ty, "type": "ammo_crate", "radius": 18})
 
 async def game_loop():
     while True:
@@ -170,31 +159,17 @@ async def game_loop():
                 weps = p.get("weapons", [])
                 rars = p.get("rarities", [])
                 counts = p.get("counts", [])
-                clips = p.get("clips", [])
-                ammo = p.get("ammo", {"light": 0, "medium": 0, "shotgun": 0, "heavy": 0})
                 
-                # Scatter Weapons
                 for i in range(len(weps)):
                     w = weps[i]
                     r = rars[i]
                     c = counts[i] if i < len(counts) else 1
-                    clp = clips[i] if i < len(clips) else 0
                     if w and w != "fists":
                         ang = random.uniform(0, math.pi * 2)
                         dist = random.uniform(30, 80)
                         state["items"].append({
                             "id": str(uuid.uuid4()), "x": p["x"] + math.cos(ang)*dist, "y": p["y"] + math.sin(ang)*dist,
-                            "type": w, "rarity": r, "radius": 15, "count": c, "clip": clp
-                        })
-                        
-                # Scatter Ammo Reserves
-                for am_type, am_count in ammo.items():
-                    if am_count > 0:
-                        ang = random.uniform(0, math.pi * 2)
-                        dist = random.uniform(40, 90)
-                        state["items"].append({
-                            "id": str(uuid.uuid4()), "x": p["x"] + math.cos(ang)*dist, "y": p["y"] + math.sin(ang)*dist,
-                            "type": f"ammo_{am_type}", "rarity": "common", "radius": 12, "count": am_count
+                            "type": w, "rarity": r, "radius": 15, "count": c
                         })
                 
                 ws = connected_clients.get(pid)
@@ -223,8 +198,7 @@ async def handler(websocket):
                 state["players"][cid] = {
                     "x": 1000, "y": 1000, "radius": 15, "color": f"hsl({random.randint(0,360)},100%,50%)", 
                     "score": 0, "health": 100, "shields": 0, "iframeUntil": 0, "aimAngle": 0, 
-                    "currentWeapon": "fists", "name": clean_name, "weapons": [], "rarities": [], 
-                    "counts": [], "clips": [], "ammo": {"light": 0, "medium": 0, "shotgun": 0, "heavy": 0}
+                    "currentWeapon": "fists", "name": clean_name, "weapons": [], "rarities": [], "counts": []
                 }
             
             elif data["type"] == "sync_inv":
@@ -232,8 +206,6 @@ async def handler(websocket):
                     state["players"][cid]["weapons"] = data.get("weapons", [])
                     state["players"][cid]["rarities"] = data.get("rarities", [])
                     state["players"][cid]["counts"] = data.get("counts", [])
-                    state["players"][cid]["clips"] = data.get("clips", [])
-                    state["players"][cid]["ammo"] = data.get("ammo", {"light": 0, "medium": 0, "shotgun": 0, "heavy": 0})
 
             elif data["type"] == "move":
                 if cid not in state["players"]: continue
@@ -260,40 +232,22 @@ async def handler(websocket):
                 
                 for box in state["loot_boxes"][:]:
                     if math.hypot(p["x"] - box["x"], p["y"] - box["y"]) < p["radius"] + box["radius"] + 20:
+                        weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
+                        count = random.randint(2, 3) if box["type"] == "chest" else random.randint(1, 2)
                         
-                        # --- NEW: AMMO CRATE LOGIC ---
-                        if box["type"] == "ammo_crate":
-                            for _ in range(3):
-                                typ = random.choice(["ammo_light", "ammo_medium", "ammo_shotgun", "ammo_heavy"])
-                                state["items"].append({
-                                    "id": str(uuid.uuid4()), "x": box["x"] + random.uniform(-30, 30), "y": box["y"] + random.uniform(-30, 30),
-                                    "type": typ, "rarity": "common", "count": AMMO_SPAWN[typ], "radius": 12
-                                })
-                        else:
-                            weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
-                            count = random.randint(2, 3) if box["type"] == "chest" else random.randint(1, 2)
-                            
-                            for _ in range(count):
-                                typ = random.choice(["pistol", "ar", "shotgun", "sniper", "bandage", "medkit", "mini", "big"])
-                                if typ in ["bandage", "medkit", "mini", "big"]:
-                                    r = {"bandage": "common", "medkit": "rare", "mini": "uncommon", "big": "rare"}[typ]
-                                    c = {"bandage": 5, "medkit": 1, "mini": 2, "big": 1}[typ]
-                                    clip_val = 0
-                                else:
-                                    r = random.choices(RARITY_CHOICES, weights=weights)[0]
-                                    c = 1
-                                    clip_val = AMMO_MAX[typ]
-                                    # Drop Ammo with the weapon!
-                                    ammo_typ = AMMO_MAP[typ]
-                                    state["items"].append({
-                                        "id": str(uuid.uuid4()), "x": box["x"] + random.uniform(-30, 30), "y": box["y"] + random.uniform(-30, 30),
-                                        "type": ammo_typ, "rarity": "common", "count": AMMO_SPAWN[ammo_typ], "radius": 12
-                                    })
+                        for _ in range(count):
+                            typ = random.choice(["pistol", "ar", "shotgun", "sniper", "bandage", "medkit", "mini", "big"])
+                            if typ in ["bandage", "medkit", "mini", "big"]:
+                                r = {"bandage": "common", "medkit": "rare", "mini": "uncommon", "big": "rare"}[typ]
+                                c = {"bandage": 5, "medkit": 1, "mini": 2, "big": 1}[typ]
+                            else:
+                                r = random.choices(RARITY_CHOICES, weights=weights)[0]
+                                c = 1
 
-                                state["items"].append({
-                                    "id": str(uuid.uuid4()), "x": box["x"] + random.uniform(-30, 30), "y": box["y"] + random.uniform(-30, 30),
-                                    "type": typ, "rarity": r, "count": c, "clip": clip_val, "radius": 15
-                                })
+                            state["items"].append({
+                                "id": str(uuid.uuid4()), "x": box["x"] + random.uniform(-30, 30), "y": box["y"] + random.uniform(-30, 30),
+                                "type": typ, "rarity": r, "count": c, "radius": 15
+                            })
                             
                         state["loot_boxes"].remove(box)
                         interacted = True
@@ -302,10 +256,7 @@ async def handler(websocket):
                 if not interacted:
                     for item in state["items"][:]:
                         if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
-                            await websocket.send(json.dumps({
-                                "type": "pickup", "weapon": item["type"], "rarity": item["rarity"], 
-                                "count": item.get("count", 1), "clip": item.get("clip", AMMO_MAX.get(item["type"], 0))
-                            }))
+                            await websocket.send(json.dumps({"type": "pickup", "weapon": item["type"], "rarity": item["rarity"], "count": item.get("count", 1)}))
                             state["items"].remove(item)
                             break
             
@@ -313,7 +264,7 @@ async def handler(websocket):
                 if cid not in state["players"]: continue
                 state["items"].append({
                     "id": str(uuid.uuid4()), "x": state["players"][cid]["x"], "y": state["players"][cid]["y"], 
-                    "type": data["weapon"], "rarity": data["rarity"], "count": data.get("count", 1), "clip": data.get("clip", 0), "radius": 15
+                    "type": data["weapon"], "rarity": data["rarity"], "count": data.get("count", 1), "radius": 15
                 })
             
             elif data["type"] == "shoot":

@@ -5,7 +5,7 @@ const scoreDisplay = document.getElementById('score');
 const loadingOverlay = document.getElementById('loadingOverlay');
 const menuOverlay = document.getElementById('menuOverlay');
 const helpModal = document.getElementById('helpModal');
-const aboutModal = document.getElementById('aboutModal');
+const aboutModal = document.getElementById('aboutModal'); 
 const nameInput = document.getElementById('nameInput');
 const playBtn = document.getElementById('playBtn');
 const lastScoreDisplay = document.getElementById('lastScoreDisplay'); 
@@ -19,22 +19,10 @@ let serverTime = 0;
 let mouseX = 0, mouseY = 0; 
 let isDead = true; 
 
-// --- NEW: AMMO ARRAYS AND DICTIONARIES ---
 let WEAPONS = ['fists', null, null, null, null];
 let WEAPON_RARITIES = ['common', null, null, null, null];
 let COUNTS = [0, 0, 0, 0, 0];
-let CLIPS = [0, 0, 0, 0, 0];
-let AMMO = { light: 0, medium: 0, shotgun: 0, heavy: 0 };
 let currentWeaponIndex = 0; 
-
-let isReloading = false;
-let reloadEndTime = 0;
-let reloadWeaponIndex = -1;
-let reloadTimeTotal = 1;
-
-const MAX_CLIPS = { pistol: 15, ar: 30, shotgun: 5, sniper: 1 };
-const AMMO_TYPES = { pistol: 'light', ar: 'medium', shotgun: 'shotgun', sniper: 'heavy' };
-const RELOAD_TIMES = { pistol: 1500, ar: 2000, shotgun: 3000, sniper: 2500 };
 
 let isDragging = false;
 let draggedSlot = -1;
@@ -50,8 +38,8 @@ const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 150
 let isMouseDown = false;
 let lastShotTime = 0;
 
-// INSERT YOUR RENDER URL HERE
-const socket = new WebSocket('ws://localhost:8000');
+// IMPORTANT: Replace this with your Render WSS URL!
+const socket = new WebSocket('wss://zombsarena.onrender.com');
 socket.onopen = () => { 
     loadingOverlay.classList.add('hidden'); 
     menuOverlay.classList.remove('hidden');
@@ -59,26 +47,7 @@ socket.onopen = () => {
 
 function syncInventory() {
     if (socket.readyState === WebSocket.OPEN && !isDead) {
-        socket.send(JSON.stringify({ type: 'sync_inv', weapons: WEAPONS, rarities: WEAPON_RARITIES, counts: COUNTS, clips: CLIPS, ammo: AMMO }));
-    }
-}
-
-// --- NEW: Reload Function ---
-function attemptReload() {
-    if (isReloading || isDead) return;
-    let w = WEAPONS[currentWeaponIndex];
-    if (!w || w === 'fists' || MAX_STACKS[w]) return; 
-
-    let maxClip = MAX_CLIPS[w];
-    let currentClip = CLIPS[currentWeaponIndex];
-    let ammoType = AMMO_TYPES[w];
-    let reserve = AMMO[ammoType];
-
-    if (currentClip < maxClip && reserve > 0) {
-        isReloading = true;
-        reloadEndTime = Date.now() + RELOAD_TIMES[w];
-        reloadWeaponIndex = currentWeaponIndex;
-        reloadTimeTotal = RELOAD_TIMES[w];
+        socket.send(JSON.stringify({ type: 'sync_inv', weapons: WEAPONS, rarities: WEAPON_RARITIES, counts: COUNTS }));
     }
 }
 
@@ -93,11 +62,8 @@ playBtn.addEventListener('click', () => {
     WEAPONS = ['fists', null, null, null, null];
     WEAPON_RARITIES = ['common', null, null, null, null];
     COUNTS = [0, 0, 0, 0, 0];
-    CLIPS = [0, 0, 0, 0, 0];
-    AMMO = { light: 0, medium: 0, shotgun: 0, heavy: 0 };
     currentWeaponIndex = 0;
     isDead = false;
-    isReloading = false;
     
     socket.send(JSON.stringify({ type: 'spawn', name: name }));
     syncInventory();
@@ -127,18 +93,9 @@ socket.onmessage = (event) => {
         menuOverlay.classList.remove('hidden');
     }
     else if (msg.type === 'pickup' && !isDead) {
-        // Handle Ammo specific pickups instantly
-        if (msg.weapon.startsWith('ammo_')) {
-            let type = msg.weapon.replace('ammo_', '');
-            AMMO[type] += msg.count;
-            syncInventory();
-            return;
-        }
-
         let type = msg.weapon;
         let count = msg.count || 1;
         let rarity = msg.rarity;
-        let clip = msg.clip !== undefined ? msg.clip : (MAX_CLIPS[type] || 0);
         let originalCount = count; 
 
         if (MAX_STACKS[type]) {
@@ -146,9 +103,12 @@ socket.onmessage = (event) => {
                 if (WEAPONS[i] === type && COUNTS[i] < MAX_STACKS[type]) {
                     let space = MAX_STACKS[type] - COUNTS[i];
                     if (count <= space) {
-                        COUNTS[i] += count; count = 0; break;
+                        COUNTS[i] += count;
+                        count = 0;
+                        break;
                     } else {
-                        COUNTS[i] = MAX_STACKS[type]; count -= space;
+                        COUNTS[i] = MAX_STACKS[type];
+                        count -= space;
                     }
                 }
             }
@@ -164,23 +124,27 @@ socket.onmessage = (event) => {
                 WEAPONS[emptySlot] = type;
                 WEAPON_RARITIES[emptySlot] = rarity;
                 COUNTS[emptySlot] = count;
-                CLIPS[emptySlot] = clip;
             } else {
                 let partiallyAbsorbed = (count !== originalCount);
                 if (currentWeaponIndex !== 0 && !partiallyAbsorbed) {
                     let slotToReplace = currentWeaponIndex;
                     socket.send(JSON.stringify({ 
-                        type: 'drop', weapon: WEAPONS[slotToReplace], rarity: WEAPON_RARITIES[slotToReplace], 
-                        count: COUNTS[slotToReplace], clip: CLIPS[slotToReplace]
+                        type: 'drop', 
+                        weapon: WEAPONS[slotToReplace], 
+                        rarity: WEAPON_RARITIES[slotToReplace], 
+                        count: COUNTS[slotToReplace] 
                     }));
 
                     WEAPONS[slotToReplace] = type;
                     WEAPON_RARITIES[slotToReplace] = rarity;
                     COUNTS[slotToReplace] = count;
-                    CLIPS[slotToReplace] = clip;
-                    isReloading = false; // Cancel reload on pickup swap
                 } else {
-                    socket.send(JSON.stringify({ type: 'drop', weapon: type, rarity: rarity, count: count, clip: clip }));
+                    socket.send(JSON.stringify({ 
+                        type: 'drop', 
+                        weapon: type, 
+                        rarity: rarity, 
+                        count: count 
+                    }));
                 }
             }
         }
@@ -201,10 +165,6 @@ window.addEventListener('keydown', (e) => {
 
     if (k === 'e' && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'interact' }));
-    }
-    
-    if (k === 'r') {
-        attemptReload();
     }
 });
 window.addEventListener('keyup', (e) => {
@@ -255,9 +215,9 @@ window.addEventListener('mouseup', () => {
         }
 
         if (droppedOnSlot !== -1) {
-            let tempW = WEAPONS[droppedOnSlot]; let tempR = WEAPON_RARITIES[droppedOnSlot]; let tempC = COUNTS[droppedOnSlot]; let tempClp = CLIPS[droppedOnSlot];
-            WEAPONS[droppedOnSlot] = WEAPONS[draggedSlot]; WEAPON_RARITIES[droppedOnSlot] = WEAPON_RARITIES[draggedSlot]; COUNTS[droppedOnSlot] = COUNTS[draggedSlot]; CLIPS[droppedOnSlot] = CLIPS[draggedSlot];
-            WEAPONS[draggedSlot] = tempW; WEAPON_RARITIES[draggedSlot] = tempR; COUNTS[draggedSlot] = tempC; CLIPS[draggedSlot] = tempClp;
+            let tempW = WEAPONS[droppedOnSlot]; let tempR = WEAPON_RARITIES[droppedOnSlot]; let tempC = COUNTS[droppedOnSlot];
+            WEAPONS[droppedOnSlot] = WEAPONS[draggedSlot]; WEAPON_RARITIES[droppedOnSlot] = WEAPON_RARITIES[draggedSlot]; COUNTS[droppedOnSlot] = COUNTS[draggedSlot];
+            WEAPONS[draggedSlot] = tempW; WEAPON_RARITIES[draggedSlot] = tempR; COUNTS[draggedSlot] = tempC;
             
             if (currentWeaponIndex === draggedSlot) currentWeaponIndex = droppedOnSlot;
             else if (currentWeaponIndex === droppedOnSlot) currentWeaponIndex = draggedSlot;
@@ -265,8 +225,8 @@ window.addEventListener('mouseup', () => {
         } else {
             const inventoryWidth = (slotSize + slotSpacing) * 5;
             if (mouseX > hudX + inventoryWidth || mouseY < itemsY || mouseY > itemsY + slotSize) {
-                socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[draggedSlot], rarity: WEAPON_RARITIES[draggedSlot], count: COUNTS[draggedSlot], clip: CLIPS[draggedSlot] }));
-                WEAPONS[draggedSlot] = null; WEAPON_RARITIES[draggedSlot] = null; COUNTS[draggedSlot] = 0; CLIPS[draggedSlot] = 0;
+                socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[draggedSlot], rarity: WEAPON_RARITIES[draggedSlot], count: COUNTS[draggedSlot] }));
+                WEAPONS[draggedSlot] = null; WEAPON_RARITIES[draggedSlot] = null; COUNTS[draggedSlot] = 0;
                 if (currentWeaponIndex === draggedSlot) currentWeaponIndex = 0; 
             }
         }
@@ -298,22 +258,7 @@ setInterval(() => {
             else if (currentWeaponType === 'medkit') { if (myStats.health < 100) canUse = true; }
             else if (currentWeaponType === 'mini') { if (myStats.shields < 50) canUse = true; }
             else if (currentWeaponType === 'big') { if (myStats.shields < 100) canUse = true; }
-            else { 
-                // --- GUNS LOGIC ---
-                if (isReloading) return; // Cant shoot while reloading
-                
-                if (CLIPS[currentWeaponIndex] > 0) {
-                    CLIPS[currentWeaponIndex]--;
-                    canUse = true;
-                    
-                    if (CLIPS[currentWeaponIndex] === 0) {
-                        attemptReload(); // Auto reload when empty
-                    }
-                    syncInventory();
-                } else {
-                    attemptReload();
-                }
-            } 
+            else { canUse = true; } 
 
             if (canUse) {
                 const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
@@ -325,7 +270,9 @@ setInterval(() => {
                 if (MAX_STACKS[currentWeaponType]) {
                     COUNTS[currentWeaponIndex]--;
                     if (COUNTS[currentWeaponIndex] <= 0) {
-                        WEAPONS[currentWeaponIndex] = null; WEAPON_RARITIES[currentWeaponIndex] = null; currentWeaponIndex = 0;
+                        WEAPONS[currentWeaponIndex] = null;
+                        WEAPON_RARITIES[currentWeaponIndex] = null;
+                        currentWeaponIndex = 0;
                     }
                     syncInventory();
                 }
@@ -342,14 +289,7 @@ function getWeaponName(w) {
 
 function drawLootBox(box) {
     ctx.save(); ctx.translate(box.x, box.y);
-    
-    // Ammo Crates are green!
-    if (box.type === 'ammo_crate') {
-        ctx.fillStyle = '#27ae60';
-    } else {
-        ctx.fillStyle = box.type === 'chest' ? '#d4af37' : '#8b4513';
-    }
-    
+    ctx.fillStyle = box.type === 'chest' ? '#d4af37' : '#8b4513';
     ctx.fillRect(-box.radius, -box.radius, box.radius*2, box.radius*2);
     ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.strokeRect(-box.radius, -box.radius, box.radius*2, box.radius*2);
     ctx.beginPath(); ctx.moveTo(-box.radius, -box.radius); ctx.lineTo(box.radius, box.radius);
@@ -392,13 +332,6 @@ function drawWeaponIcon(ctx, type) {
     } else if (type === 'big') {
         ctx.fillStyle = '#2980b9'; ctx.beginPath(); ctx.arc(0, 2, 10, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#95a5a6'; ctx.fillRect(-4, -8, 8, 6);
-    } else if (type.startsWith('ammo_')) {
-        let color = '#f1c40f'; // light
-        if (type === 'ammo_medium') color = '#2ecc71';
-        if (type === 'ammo_shotgun') color = '#e74c3c';
-        if (type === 'ammo_heavy') color = '#9b59b6';
-        ctx.fillStyle = color; ctx.fillRect(-6, -6, 12, 12);
-        ctx.fillStyle = '#333'; ctx.fillRect(-3, -3, 6, 6);
     }
 }
 
@@ -466,22 +399,6 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // --- RELOAD TICKER ---
-    if (isReloading) {
-        if (currentWeaponIndex !== reloadWeaponIndex) {
-            isReloading = false; // Cancel reload if swapped
-        } else if (Date.now() >= reloadEndTime) {
-            isReloading = false;
-            let w = WEAPONS[currentWeaponIndex];
-            let needed = MAX_CLIPS[w] - CLIPS[currentWeaponIndex];
-            let ammoType = AMMO_TYPES[w];
-            let take = Math.min(needed, AMMO[ammoType]);
-            CLIPS[currentWeaponIndex] += take;
-            AMMO[ammoType] -= take;
-            syncInventory();
-        }
-    }
     
     let camX = canvas.width / 2; let camY = canvas.height / 2;
     if (!isDead && currentState.players[myId]) {
@@ -575,16 +492,6 @@ function draw() {
         ctx.fillStyle = '#e74c3c'; ctx.fillRect(hudX, healthY, barWidth * (myPlayer.health/100), barHeight);
         ctx.fillStyle = '#FFF'; ctx.fillText(`${Math.round(myPlayer.health)} / 100 HP`, hudX + 10, healthY + 18);
 
-        // --- NEW: Render Total Ammo on HUD ---
-        let cw = WEAPONS[currentWeaponIndex];
-        if (MAX_CLIPS[cw]) {
-            let at = AMMO_TYPES[cw];
-            ctx.fillStyle = '#f1c40f';
-            ctx.font = 'bold 18px sans-serif';
-            ctx.textAlign = 'left';
-            ctx.fillText(`AMMO: ${CLIPS[currentWeaponIndex]} / ${AMMO[at]}`, hudX + barWidth + 20, healthY + 18);
-        }
-
         const slotSize = 50; const slotSpacing = 10; const itemsY = healthY + barHeight + 15; 
         ctx.font = 'bold 10px sans-serif';
 
@@ -614,12 +521,6 @@ function draw() {
                 ctx.textAlign = 'right'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#FFF';
                 ctx.fillText('x' + COUNTS[i], x + slotSize - 4, itemsY + 14);
             }
-            
-            // --- NEW: Draw tiny clip numbers in the bottom right of the weapon squares ---
-            if (MAX_CLIPS[slotWeapon]) {
-                ctx.textAlign = 'right'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#FFF';
-                ctx.fillText(CLIPS[i], x + slotSize - 4, itemsY + slotSize - 4);
-            }
 
             ctx.textAlign = 'center'; ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#FFF';
             ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 4);
@@ -629,18 +530,6 @@ function draw() {
             ctx.save(); ctx.translate(mouseX, mouseY); ctx.globalAlpha = 0.8;
             drawWeaponIcon(ctx, WEAPONS[draggedSlot]); ctx.restore();
         }
-        
-        // --- NEW: Draw the Reload Progress Bar on the crosshair! ---
-        if (isReloading) {
-            let pct = (Date.now() - (reloadEndTime - reloadTimeTotal)) / reloadTimeTotal;
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(mouseX - 25, mouseY + 20, 50, 6);
-            ctx.fillStyle = '#3498db';
-            ctx.fillRect(mouseX - 25, mouseY + 20, 50 * pct, 6);
-            ctx.fillStyle = '#FFF'; ctx.textAlign = 'center'; ctx.font = '10px Arial';
-            ctx.fillText("Reloading...", mouseX, mouseY + 35);
-        }
-
         ctx.textAlign = 'left';
     }
 
