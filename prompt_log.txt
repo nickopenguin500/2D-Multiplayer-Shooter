@@ -36,4 +36,3 @@ Reason: "Exited with status 1"
 32. ok this kind of broke some stuff and isnt working, how do i roll this back
 33. i noticed on github pages it lets me put a custom domain, could i do anything with that
 34. i added maybe too much text? another paragraph to the about part and i cant see the last paragraph
-35. 
