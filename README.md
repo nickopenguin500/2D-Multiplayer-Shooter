@@ -1,5 +1,5 @@
 What the project does:
-Zombs Arena is a 2D PvPvE shooter game heavily inspired by zombsroyale. There are waves of AI zombies. Players can scavenge the map for weapons and consumables. 
+Zombs Arena is a 2D PvPvE shooter game heavily inspired by zombsroyale. There are waves of AI zombies. Players can scavenge the map for weapons and consumables. It uses a backend to store the positions and game info.
 
 How to use it:
 wasd: moving your character
