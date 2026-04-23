@@ -42,6 +42,7 @@
             <h2>About Zombs Arena</h2>
             <p>This is my capstone project for 15-113. It is a 2D PvPvE shooter game heavily inspired by zombsroyale.</p>
             <p>Game Details: There are 4 weapon types: pistols, shotguns, ARs, and snipers. There are weapon rarities represented by 6 colors (Gray, Green, Blue, Purple, Gold, Red). Increasing rarity either increases the damage or changes the number of pellets (shotgun). Running is faster with fists equipped.</p>
+            <p>The project uses websockets to reduce latency. It ticks roughly 30 times per second, each tick updates positions, checks collisions, and sends the updates to connected websockets. Diagonal movement is normalized to prevent faster movement relative to xy. Zombies have collision projection to allow them to slide off objects instead of getting stuck. Sniper bullets move fast enough to skip past small zombies between ticks, so the collision check calculates subpositions of where the bullet was.</p>
             <button id="closeAboutBtn">Close</button>
         </div>
     </div>
