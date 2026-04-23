@@ -18,19 +18,15 @@ state = {
     "loot_boxes": [], 
     "damage_indicators": []
 }
-connected_clients = set()
+connected_clients = {} # NEW: Track sockets to send direct "You Died" messages
 
 RARITY_CHOICES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
 RARITY_WEIGHTS_CRATE = [70, 20, 8, 1.8, 0.2, 0.0]
 RARITY_WEIGHTS_CHEST = [10, 30, 40, 15, 4, 1.0]
 
 RARITY_MULTIPLIERS = {
-    "common": 1.0,
-    "uncommon": 1.2,
-    "rare": 1.5,
-    "epic": 1.8,
-    "legendary": 2.2,
-    "mythic": 2.8
+    "common": 1.0, "uncommon": 1.2, "rare": 1.5,
+    "epic": 1.8, "legendary": 2.2, "mythic": 2.8
 }
 
 def spawn_trees():
@@ -55,6 +51,7 @@ async def game_loop():
     while True:
         current_time = time.time()
         state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
+        dead_players = [] # Track who dies this frame
 
         for b in state["bullets"][:]:
             steps = 3 if math.hypot(b["vx"], b["vy"]) > 25 else 1
@@ -79,8 +76,8 @@ async def game_loop():
                         else: p["health"] -= (dmg - p["shields"]); p["shields"] = 0
                         if b in state["bullets"]: state["bullets"].remove(b)
                         hit_something = True
-                        if p["health"] <= 0:
-                            p["health"], p["shields"], p["x"], p["y"], p["score"] = 100, 50, 1000, 1000, 0
+                        if p["health"] <= 0 and pid not in dead_players:
+                            dead_players.append(pid)
                             if b["ownerId"] in state["players"]: state["players"][b["ownerId"]]["score"] += 100
                         break
                 if hit_something: break
@@ -124,22 +121,71 @@ async def game_loop():
                         if p["shields"] >= dmg: p["shields"] -= dmg
                         else: p["health"] -= (dmg - p["shields"]); p["shields"] = 0
                         p["iframeUntil"] = current_time + 1.0
-                        if p["health"] <= 0: p["health"], p["shields"], p["x"], p["y"], p["score"] = 100, 50, 1000, 1000, 0
+                        if p["health"] <= 0 and pid not in dead_players:
+                            dead_players.append(pid)
+
+        # --- NEW: PROCESS DEATHS & SCATTER INVENTORY ---
+        for pid in dead_players:
+            if pid in state["players"]:
+                p = state["players"][pid]
+                weps = p.get("weapons", [])
+                rars = p.get("rarities", [])
+                
+                # Scatter their items in a circle!
+                for i in range(len(weps)):
+                    w = weps[i]
+                    r = rars[i]
+                    if w and w != "fists":
+                        ang = random.uniform(0, math.pi * 2)
+                        dist = random.uniform(30, 80) # Distance to scatter
+                        state["items"].append({
+                            "id": str(uuid.uuid4()), "x": p["x"] + math.cos(ang)*dist, "y": p["y"] + math.sin(ang)*dist,
+                            "type": w, "rarity": r, "radius": 15
+                        })
+                
+                # Tell the dead client to show the menu
+                ws = connected_clients.get(pid)
+                if ws:
+                    asyncio.create_task(ws.send(json.dumps({"type": "dead"})))
+                
+                del state["players"][pid] # Remove them from the map
 
         if connected_clients:
-            websockets.broadcast(connected_clients, json.dumps({"type": "state", "data": state, "time": current_time}))
+            msg = json.dumps({"type": "state", "data": state, "time": current_time})
+            for ws in list(connected_clients.values()):
+                asyncio.create_task(ws.send(msg))
+                
         await asyncio.sleep(1/30)
 
 async def handler(websocket):
     cid = str(uuid.uuid4())
-    connected_clients.add(websocket)
-    state["players"][cid] = {"x": 1000, "y": 1000, "radius": 15, "color": f"hsl({random.randint(0,360)},100%,50%)", "score": 0, "health": 100, "shields": 50, "iframeUntil": 0, "aimAngle": 0, "currentWeapon": "fists"}
+    connected_clients[cid] = websocket
     await websocket.send(json.dumps({"type": "init", "id": cid}))
     
     try:
         async for message in websocket:
             data = json.loads(message)
-            if data["type"] == "move":
+            
+            # NEW: Spawning logic!
+            if data["type"] == "spawn":
+                # Clean the name to prevent abuse
+                raw_name = data.get("name", "Player")
+                clean_name = "".join(c for c in raw_name if c.isalnum() or c == ' ')[:12]
+                
+                state["players"][cid] = {
+                    "x": 1000, "y": 1000, "radius": 15, "color": f"hsl({random.randint(0,360)},100%,50%)", 
+                    "score": 0, "health": 100, "shields": 50, "iframeUntil": 0, "aimAngle": 0, 
+                    "currentWeapon": "fists", "name": clean_name, "weapons": [], "rarities": []
+                }
+            
+            # NEW: Inventory Sync logic
+            elif data["type"] == "sync_inv":
+                if cid in state["players"]:
+                    state["players"][cid]["weapons"] = data.get("weapons", [])
+                    state["players"][cid]["rarities"] = data.get("rarities", [])
+
+            elif data["type"] == "move":
+                if cid not in state["players"]: continue
                 p = state["players"][cid]
                 p["aimAngle"] = data["aimAngle"]
                 p["currentWeapon"] = data.get("weapon", "fists")
@@ -157,9 +203,9 @@ async def handler(websocket):
                         p["x"] += math.cos(pa) * overlap; p["y"] += math.sin(pa) * overlap
             
             elif data["type"] == "interact":
+                if cid not in state["players"]: continue
                 p = state["players"][cid]
-                interacted = False # Prevent opening a box and picking up a gun in the same frame
-                
+                interacted = False
                 for box in state["loot_boxes"][:]:
                     if math.hypot(p["x"] - box["x"], p["y"] - box["y"]) < p["radius"] + box["radius"] + 20:
                         weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
@@ -173,7 +219,6 @@ async def handler(websocket):
                         state["loot_boxes"].remove(box)
                         interacted = True
                         break
-                
                 if not interacted:
                     for item in state["items"][:]:
                         if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
@@ -182,32 +227,29 @@ async def handler(websocket):
                             break
             
             elif data["type"] == "drop":
+                if cid not in state["players"]: continue
                 state["items"].append({"id": str(uuid.uuid4()), "x": state["players"][cid]["x"], "y": state["players"][cid]["y"], "type": data["weapon"], "rarity": data["rarity"], "radius": 15})
             
             elif data["type"] == "shoot":
+                if cid not in state["players"]: continue
                 p = state["players"][cid]; a = data["angle"]; w = data["weapon"]
-                
                 rarity = data.get("rarity", "common")
                 mult = RARITY_MULTIPLIERS.get(rarity, 1.0)
                 
-                if w == "pistol": 
-                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10 * mult})
-                elif w == "ar": 
-                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5 * mult})
+                if w == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10 * mult})
+                elif w == "ar": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5 * mult})
                 elif w == "shotgun":
                     pellet_count_map = {"common": 5, "uncommon": 6, "rare": 7, "epic": 8, "legendary": 10, "mythic": 12}
                     pellets = pellet_count_map.get(rarity, 5)
-                    
                     for _ in range(pellets):
-                        sa = a + random.uniform(-0.25, 0.25)
-                        sp = random.uniform(12, 16)
-                        # Shotgun damage stays flat at 6!
+                        sa = a + random.uniform(-0.25, 0.25); sp = random.uniform(12, 16)
                         state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(sa)*sp, "vy": math.sin(sa)*sp, "ownerId": cid, "radius": 3, "damage": 6})
-                elif w == "sniper": 
-                    state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50 * mult})
+                elif w == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50 * mult})
 
     except websockets.exceptions.ConnectionClosed: pass
-    finally: connected_clients.remove(websocket); del state["players"][cid]
+    finally:
+        if cid in connected_clients: del connected_clients[cid]
+        if cid in state["players"]: del state["players"][cid]
 
 async def spawner():
     while True:

@@ -7,10 +7,31 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="loadingOverlay">
-        <div>
+    <div id="loadingOverlay" class="overlay">
+        <div class="menu-box">
             <h2>Waking up the server...</h2>
             <p>This can take up to 60 seconds on the free tier.</p>
+        </div>
+    </div>
+
+    <div id="menuOverlay" class="overlay hidden">
+        <div class="menu-box">
+            <h1>Zombs Arena</h1>
+            <input type="text" id="nameInput" placeholder="Enter Name (max 12)" maxlength="12">
+            <button id="playBtn">Play / Respawn</button>
+            <button id="helpBtn">How to Play</button>
+        </div>
+    </div>
+
+    <div id="helpModal" class="overlay hidden">
+        <div class="menu-box">
+            <h2>Controls</h2>
+            <p><strong>W A S D:</strong> Move</p>
+            <p><strong>Mouse:</strong> Aim & Shoot</p>
+            <p><strong>1 - 5:</strong> Select Weapon</p>
+            <p><strong>E:</strong> Pick up item / Open chest</p>
+            <p><strong>Drag & Drop:</strong> Swap items or drop them on the ground.</p>
+            <button id="closeHelpBtn">Close</button>
         </div>
     </div>
 
