@@ -31,7 +31,8 @@ Reason: "Exited with status 1"
 28. its hard to read the stack count for the consumables because the text. you could try either making the inventory bigger or shifting the text and icons up a little bit so that the stack count is visible. or make the stack count in the top right or somewhere not occupied
 28. its stuck on waking up server now, its been like 3 mins
 29. ok its working now, it was the link. can you add an about button on the menu, leave sample text but i will write it myself. also make it so the menu shows your score if you just died. make it so when you kill another player, their score gets added to yours
-30. 
+30. ok how do i deploy this on github pages? i have two folders, backend and frontend
+
 
 
 Not yet entered:

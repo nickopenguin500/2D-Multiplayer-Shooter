@@ -38,8 +38,7 @@ const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 150
 let isMouseDown = false;
 let lastShotTime = 0;
 
-// IMPORTANT: Replace this with your Render WSS URL!
-const socket = new WebSocket('ws://localhost:8000');
+const socket = new WebSocket('wss://zombsarena.onrender.com');
 socket.onopen = () => { 
     loadingOverlay.classList.add('hidden'); 
     menuOverlay.classList.remove('hidden');
