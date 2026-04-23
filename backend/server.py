@@ -18,7 +18,7 @@ state = {
     "loot_boxes": [], 
     "damage_indicators": []
 }
-connected_clients = {} # NEW: Track sockets to send direct "You Died" messages
+connected_clients = {}
 
 RARITY_CHOICES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
 RARITY_WEIGHTS_CRATE = [70, 20, 8, 1.8, 0.2, 0.0]
@@ -47,11 +47,39 @@ def spawn_loot():
 spawn_trees()
 spawn_loot()
 
+# --- NEW: Continuous Loot Spawner ---
+async def loot_spawner():
+    while True:
+        await asyncio.sleep(10) # Check every 10 seconds
+        crates = sum(1 for b in state["loot_boxes"] if b["type"] == "crate")
+        chests = sum(1 for b in state["loot_boxes"] if b["type"] == "chest")
+        
+        if crates < 15 or chests < 5:
+            # Try to find a spot that is NOT near any player
+            valid = False
+            for _ in range(10): # 10 attempts to find a valid spot
+                tx = random.uniform(100, ARENA_SIZE-100)
+                ty = random.uniform(100, ARENA_SIZE-100)
+                too_close = False
+                for p in state["players"].values():
+                    if math.hypot(p["x"] - tx, p["y"] - ty) < 400: # Stay 400px away from players
+                        too_close = True
+                        break
+                if not too_close:
+                    valid = True
+                    break
+            
+            if valid:
+                if crates < 15:
+                    state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": tx, "y": ty, "type": "crate", "radius": 20})
+                elif chests < 5:
+                    state["loot_boxes"].append({"id": str(uuid.uuid4()), "x": tx, "y": ty, "type": "chest", "radius": 25})
+
 async def game_loop():
     while True:
         current_time = time.time()
         state["damage_indicators"] = [d for d in state["damage_indicators"] if d["expires"] > current_time]
-        dead_players = [] # Track who dies this frame
+        dead_players = []
 
         for b in state["bullets"][:]:
             steps = 3 if math.hypot(b["vx"], b["vy"]) > 25 else 1
@@ -124,31 +152,28 @@ async def game_loop():
                         if p["health"] <= 0 and pid not in dead_players:
                             dead_players.append(pid)
 
-        # --- NEW: PROCESS DEATHS & SCATTER INVENTORY ---
         for pid in dead_players:
             if pid in state["players"]:
                 p = state["players"][pid]
                 weps = p.get("weapons", [])
                 rars = p.get("rarities", [])
+                counts = p.get("counts", [])
                 
-                # Scatter their items in a circle!
                 for i in range(len(weps)):
                     w = weps[i]
                     r = rars[i]
+                    c = counts[i] if i < len(counts) else 1
                     if w and w != "fists":
                         ang = random.uniform(0, math.pi * 2)
-                        dist = random.uniform(30, 80) # Distance to scatter
+                        dist = random.uniform(30, 80)
                         state["items"].append({
                             "id": str(uuid.uuid4()), "x": p["x"] + math.cos(ang)*dist, "y": p["y"] + math.sin(ang)*dist,
-                            "type": w, "rarity": r, "radius": 15
+                            "type": w, "rarity": r, "radius": 15, "count": c
                         })
                 
-                # Tell the dead client to show the menu
                 ws = connected_clients.get(pid)
-                if ws:
-                    asyncio.create_task(ws.send(json.dumps({"type": "dead"})))
-                
-                del state["players"][pid] # Remove them from the map
+                if ws: asyncio.create_task(ws.send(json.dumps({"type": "dead"})))
+                del state["players"][pid]
 
         if connected_clients:
             msg = json.dumps({"type": "state", "data": state, "time": current_time})
@@ -166,23 +191,20 @@ async def handler(websocket):
         async for message in websocket:
             data = json.loads(message)
             
-            # NEW: Spawning logic!
             if data["type"] == "spawn":
-                # Clean the name to prevent abuse
                 raw_name = data.get("name", "Player")
                 clean_name = "".join(c for c in raw_name if c.isalnum() or c == ' ')[:12]
-                
                 state["players"][cid] = {
                     "x": 1000, "y": 1000, "radius": 15, "color": f"hsl({random.randint(0,360)},100%,50%)", 
-                    "score": 0, "health": 100, "shields": 50, "iframeUntil": 0, "aimAngle": 0, 
-                    "currentWeapon": "fists", "name": clean_name, "weapons": [], "rarities": []
+                    "score": 0, "health": 100, "shields": 0, "iframeUntil": 0, "aimAngle": 0, 
+                    "currentWeapon": "fists", "name": clean_name, "weapons": [], "rarities": [], "counts": []
                 }
             
-            # NEW: Inventory Sync logic
             elif data["type"] == "sync_inv":
                 if cid in state["players"]:
                     state["players"][cid]["weapons"] = data.get("weapons", [])
                     state["players"][cid]["rarities"] = data.get("rarities", [])
+                    state["players"][cid]["counts"] = data.get("counts", [])
 
             elif data["type"] == "move":
                 if cid not in state["players"]: continue
@@ -206,45 +228,71 @@ async def handler(websocket):
                 if cid not in state["players"]: continue
                 p = state["players"][cid]
                 interacted = False
+                
+                # Check Boxes
                 for box in state["loot_boxes"][:]:
                     if math.hypot(p["x"] - box["x"], p["y"] - box["y"]) < p["radius"] + box["radius"] + 20:
                         weights = RARITY_WEIGHTS_CHEST if box["type"] == "chest" else RARITY_WEIGHTS_CRATE
                         count = random.randint(2, 3) if box["type"] == "chest" else random.randint(1, 2)
+                        
                         for _ in range(count):
+                            # Incorporate Consumables!
+                            typ = random.choice(["pistol", "ar", "shotgun", "sniper", "bandage", "medkit", "mini", "big"])
+                            
+                            if typ in ["bandage", "medkit", "mini", "big"]:
+                                r = {"bandage": "common", "medkit": "rare", "mini": "uncommon", "big": "rare"}[typ]
+                                c = {"bandage": 5, "medkit": 1, "mini": 2, "big": 1}[typ]
+                            else:
+                                r = random.choices(RARITY_CHOICES, weights=weights)[0]
+                                c = 1
+
                             state["items"].append({
                                 "id": str(uuid.uuid4()), "x": box["x"] + random.uniform(-30, 30), "y": box["y"] + random.uniform(-30, 30),
-                                "type": random.choice(["pistol", "ar", "shotgun", "sniper"]),
-                                "rarity": random.choices(RARITY_CHOICES, weights=weights)[0], "radius": 15
+                                "type": typ, "rarity": r, "count": c, "radius": 15
                             })
+                            
                         state["loot_boxes"].remove(box)
                         interacted = True
                         break
+                
+                # Check Floor Items
                 if not interacted:
                     for item in state["items"][:]:
                         if math.hypot(p["x"] - item["x"], p["y"] - item["y"]) < p["radius"] + item["radius"] + 25:
-                            await websocket.send(json.dumps({"type": "pickup", "weapon": item["type"], "rarity": item["rarity"]}))
+                            await websocket.send(json.dumps({"type": "pickup", "weapon": item["type"], "rarity": item["rarity"], "count": item.get("count", 1)}))
                             state["items"].remove(item)
                             break
             
             elif data["type"] == "drop":
                 if cid not in state["players"]: continue
-                state["items"].append({"id": str(uuid.uuid4()), "x": state["players"][cid]["x"], "y": state["players"][cid]["y"], "type": data["weapon"], "rarity": data["rarity"], "radius": 15})
+                state["items"].append({
+                    "id": str(uuid.uuid4()), "x": state["players"][cid]["x"], "y": state["players"][cid]["y"], 
+                    "type": data["weapon"], "rarity": data["rarity"], "count": data.get("count", 1), "radius": 15
+                })
             
             elif data["type"] == "shoot":
                 if cid not in state["players"]: continue
                 p = state["players"][cid]; a = data["angle"]; w = data["weapon"]
-                rarity = data.get("rarity", "common")
-                mult = RARITY_MULTIPLIERS.get(rarity, 1.0)
                 
-                if w == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10 * mult})
-                elif w == "ar": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5 * mult})
-                elif w == "shotgun":
-                    pellet_count_map = {"common": 5, "uncommon": 6, "rare": 7, "epic": 8, "legendary": 10, "mythic": 12}
-                    pellets = pellet_count_map.get(rarity, 5)
-                    for _ in range(pellets):
-                        sa = a + random.uniform(-0.25, 0.25); sp = random.uniform(12, 16)
-                        state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(sa)*sp, "vy": math.sin(sa)*sp, "ownerId": cid, "radius": 3, "damage": 6})
-                elif w == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50 * mult})
+                # --- NEW: Healing Logic ---
+                if w in ["bandage", "medkit", "mini", "big"]:
+                    if w == "bandage" and p["health"] < 75: p["health"] = min(75, p["health"] + 15)
+                    elif w == "medkit" and p["health"] < 100: p["health"] = min(100, p["health"] + 100)
+                    elif w == "mini" and p["shields"] < 50: p["shields"] = min(50, p["shields"] + 25)
+                    elif w == "big" and p["shields"] < 100: p["shields"] = min(100, p["shields"] + 50)
+                else:
+                    # Normal Weapons
+                    rarity = data.get("rarity", "common")
+                    mult = RARITY_MULTIPLIERS.get(rarity, 1.0)
+                    if w == "pistol": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*15, "vy": math.sin(a)*15, "ownerId": cid, "radius": 5, "damage": 10 * mult})
+                    elif w == "ar": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*18, "vy": math.sin(a)*18, "ownerId": cid, "radius": 4, "damage": 5 * mult})
+                    elif w == "shotgun":
+                        pellet_count_map = {"common": 5, "uncommon": 6, "rare": 7, "epic": 8, "legendary": 10, "mythic": 12}
+                        pellets = pellet_count_map.get(rarity, 5)
+                        for _ in range(pellets):
+                            sa = a + random.uniform(-0.25, 0.25); sp = random.uniform(12, 16)
+                            state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(sa)*sp, "vy": math.sin(sa)*sp, "ownerId": cid, "radius": 3, "damage": 6})
+                    elif w == "sniper": state["bullets"].append({"x": p["x"], "y": p["y"], "vx": math.cos(a)*35, "vy": math.sin(a)*35, "ownerId": cid, "radius": 4, "damage": 50 * mult})
 
     except websockets.exceptions.ConnectionClosed: pass
     finally:
@@ -262,7 +310,9 @@ async def spawner():
         await asyncio.sleep(2)
 
 async def main():
-    asyncio.create_task(game_loop()); asyncio.create_task(spawner())
+    asyncio.create_task(game_loop())
+    asyncio.create_task(spawner())
+    asyncio.create_task(loot_spawner()) # Launch the new map spawner!
     async with websockets.serve(handler, "0.0.0.0", int(os.environ.get("PORT", 8000))): await asyncio.Future()
 
 if __name__ == "__main__": asyncio.run(main())

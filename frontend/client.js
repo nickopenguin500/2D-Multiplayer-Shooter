@@ -2,7 +2,6 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const scoreDisplay = document.getElementById('score');
 
-// UI Elements
 const loadingOverlay = document.getElementById('loadingOverlay');
 const menuOverlay = document.getElementById('menuOverlay');
 const helpModal = document.getElementById('helpModal');
@@ -16,10 +15,11 @@ let currentState = { players: {}, bullets: [], zombies: [], trees: [], damage_in
 let myId = null;
 let serverTime = 0; 
 let mouseX = 0, mouseY = 0; 
-let isDead = true; // Start "dead" in the menu
+let isDead = true; 
 
 let WEAPONS = ['fists', null, null, null, null];
 let WEAPON_RARITIES = ['common', null, null, null, null];
+let COUNTS = [0, 0, 0, 0, 0];
 let currentWeaponIndex = 0; 
 
 let isDragging = false;
@@ -30,39 +30,35 @@ const RARITY_COLORS = {
     epic: '#9b59b6', legendary: '#f1c40f', mythic: '#e74c3c'      
 };
 
+const MAX_STACKS = { bandage: 15, medkit: 3, mini: 6, big: 3 };
+const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 1500, bandage: 1000, medkit: 2000, mini: 1000, big: 2000 };
+
 let isMouseDown = false;
 let lastShotTime = 0;
-const FIRE_RATES = { fists: 500, pistol: 300, ar: 100, shotgun: 800, sniper: 1500 };
 
 const socket = new WebSocket('ws://localhost:8000');
-
-// Show the spawn menu once connected
 socket.onopen = () => { 
     loadingOverlay.classList.add('hidden'); 
     menuOverlay.classList.remove('hidden');
 };
 
-// --- NEW: Sync Inventory with server! ---
 function syncInventory() {
     if (socket.readyState === WebSocket.OPEN && !isDead) {
-        socket.send(JSON.stringify({ type: 'sync_inv', weapons: WEAPONS, rarities: WEAPON_RARITIES }));
+        socket.send(JSON.stringify({ type: 'sync_inv', weapons: WEAPONS, rarities: WEAPON_RARITIES, counts: COUNTS }));
     }
 }
 
-// --- NEW: Menu Logic ---
 playBtn.addEventListener('click', () => {
     let name = nameInput.value.trim();
-    
-    // Strict Regex: Only English Letters, Numbers, and Spaces
     if (!/^[a-zA-Z0-9 ]+$/.test(name) && name.length > 0) {
         alert("Please use only standard English letters and numbers.");
         return;
     }
     if (name.length === 0) name = "Player";
     
-    // Reset our local variables for a fresh spawn
     WEAPONS = ['fists', null, null, null, null];
     WEAPON_RARITIES = ['common', null, null, null, null];
+    COUNTS = [0, 0, 0, 0, 0];
     currentWeaponIndex = 0;
     isDead = false;
     
@@ -74,40 +70,83 @@ playBtn.addEventListener('click', () => {
 document.getElementById('helpBtn').addEventListener('click', () => helpModal.classList.remove('hidden'));
 document.getElementById('closeHelpBtn').addEventListener('click', () => helpModal.classList.add('hidden'));
 
-
 socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
-    if (msg.type === 'init') { 
-        myId = msg.id; 
-    } 
+    if (msg.type === 'init') { myId = msg.id; } 
     else if (msg.type === 'state') {
         currentState = msg.data;
         serverTime = msg.time;
         if (currentState.players[myId]) scoreDisplay.innerText = currentState.players[myId].score;
     }
     else if (msg.type === 'dead') {
-        // We died! Show the respawn screen.
         isDead = true;
         menuOverlay.classList.remove('hidden');
     }
     else if (msg.type === 'pickup' && !isDead) {
-        let emptySlot = -1;
-        for (let i = 1; i < 5; i++) {
-            if (!WEAPONS[i]) { emptySlot = i; break; }
+        let type = msg.weapon;
+        let count = msg.count || 1;
+        let rarity = msg.rarity;
+        let originalCount = count; // Track original to check for partial absorption
+
+        // 1. Try to add to an existing stack first
+        if (MAX_STACKS[type]) {
+            for (let i = 1; i < 5; i++) {
+                if (WEAPONS[i] === type && COUNTS[i] < MAX_STACKS[type]) {
+                    let space = MAX_STACKS[type] - COUNTS[i];
+                    if (count <= space) {
+                        COUNTS[i] += count;
+                        count = 0;
+                        break;
+                    } else {
+                        COUNTS[i] = MAX_STACKS[type];
+                        count -= space;
+                    }
+                }
+            }
         }
 
-        if (emptySlot !== -1) {
-            WEAPONS[emptySlot] = msg.weapon;
-            WEAPON_RARITIES[emptySlot] = msg.rarity;
-        } else {
-            let slotToReplace = currentWeaponIndex;
-            if (slotToReplace === 0) slotToReplace = 1; 
+        // 2. If we still have items left to pick up
+        if (count > 0) {
+            let emptySlot = -1;
+            for (let i = 1; i < 5; i++) {
+                if (!WEAPONS[i]) { emptySlot = i; break; }
+            }
 
-            socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[slotToReplace], rarity: WEAPON_RARITIES[slotToReplace] }));
-            WEAPONS[slotToReplace] = msg.weapon;
-            WEAPON_RARITIES[slotToReplace] = msg.rarity;
+            if (emptySlot !== -1) {
+                // Put in empty slot
+                WEAPONS[emptySlot] = type;
+                WEAPON_RARITIES[emptySlot] = rarity;
+                COUNTS[emptySlot] = count;
+            } else {
+                // 3. Inventory is full. Check if we can SWAP!
+                let partiallyAbsorbed = (count !== originalCount);
+                
+                // Swap if we are holding a weapon/item (not fists) AND we didn't just split a stack
+                if (currentWeaponIndex !== 0 && !partiallyAbsorbed) {
+                    let slotToReplace = currentWeaponIndex;
+                    
+                    socket.send(JSON.stringify({ 
+                        type: 'drop', 
+                        weapon: WEAPONS[slotToReplace], 
+                        rarity: WEAPON_RARITIES[slotToReplace], 
+                        count: COUNTS[slotToReplace] 
+                    }));
+
+                    WEAPONS[slotToReplace] = type;
+                    WEAPON_RARITIES[slotToReplace] = rarity;
+                    COUNTS[slotToReplace] = count;
+                } else {
+                    // Holding fists, or we already absorbed part of this item. Drop the rest back.
+                    socket.send(JSON.stringify({ 
+                        type: 'drop', 
+                        weapon: type, 
+                        rarity: rarity, 
+                        count: count 
+                    }));
+                }
+            }
         }
-        syncInventory(); // Tell server we grabbed it
+        syncInventory(); 
     }
 };
 
@@ -174,9 +213,9 @@ window.addEventListener('mouseup', () => {
         }
 
         if (droppedOnSlot !== -1) {
-            let tempW = WEAPONS[droppedOnSlot]; let tempR = WEAPON_RARITIES[droppedOnSlot];
-            WEAPONS[droppedOnSlot] = WEAPONS[draggedSlot]; WEAPON_RARITIES[droppedOnSlot] = WEAPON_RARITIES[draggedSlot];
-            WEAPONS[draggedSlot] = tempW; WEAPON_RARITIES[draggedSlot] = tempR;
+            let tempW = WEAPONS[droppedOnSlot]; let tempR = WEAPON_RARITIES[droppedOnSlot]; let tempC = COUNTS[droppedOnSlot];
+            WEAPONS[droppedOnSlot] = WEAPONS[draggedSlot]; WEAPON_RARITIES[droppedOnSlot] = WEAPON_RARITIES[draggedSlot]; COUNTS[droppedOnSlot] = COUNTS[draggedSlot];
+            WEAPONS[draggedSlot] = tempW; WEAPON_RARITIES[draggedSlot] = tempR; COUNTS[draggedSlot] = tempC;
             
             if (currentWeaponIndex === draggedSlot) currentWeaponIndex = droppedOnSlot;
             else if (currentWeaponIndex === droppedOnSlot) currentWeaponIndex = draggedSlot;
@@ -184,13 +223,13 @@ window.addEventListener('mouseup', () => {
         } else {
             const inventoryWidth = (slotSize + slotSpacing) * 5;
             if (mouseX > hudX + inventoryWidth || mouseY < itemsY || mouseY > itemsY + slotSize) {
-                socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[draggedSlot], rarity: WEAPON_RARITIES[draggedSlot] }));
-                WEAPONS[draggedSlot] = null; WEAPON_RARITIES[draggedSlot] = null;
+                socket.send(JSON.stringify({ type: 'drop', weapon: WEAPONS[draggedSlot], rarity: WEAPON_RARITIES[draggedSlot], count: COUNTS[draggedSlot] }));
+                WEAPONS[draggedSlot] = null; WEAPON_RARITIES[draggedSlot] = null; COUNTS[draggedSlot] = 0;
                 if (currentWeaponIndex === draggedSlot) currentWeaponIndex = 0; 
             }
         }
         isDragging = false; draggedSlot = -1;
-        syncInventory(); // Tell server we rearranged/dropped!
+        syncInventory(); 
     }
     isMouseDown = false;
 }); 
@@ -210,10 +249,32 @@ setInterval(() => {
         if (!currentWeaponType || currentWeaponType === 'fists') return;
 
         if (now - lastShotTime >= FIRE_RATES[currentWeaponType]) {
-            const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
-            socket.send(JSON.stringify({ type: 'shoot', angle: angle, weapon: currentWeaponType, rarity: WEAPON_RARITIES[currentWeaponIndex] }));
-            lastShotTime = now;
-            if (currentWeaponType === 'pistol') isMouseDown = false; 
+            let canUse = false;
+            let myStats = currentState.players[myId];
+
+            if (currentWeaponType === 'bandage') { if (myStats.health < 75) canUse = true; }
+            else if (currentWeaponType === 'medkit') { if (myStats.health < 100) canUse = true; }
+            else if (currentWeaponType === 'mini') { if (myStats.shields < 50) canUse = true; }
+            else if (currentWeaponType === 'big') { if (myStats.shields < 100) canUse = true; }
+            else { canUse = true; } 
+
+            if (canUse) {
+                const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
+                socket.send(JSON.stringify({ type: 'shoot', angle: angle, weapon: currentWeaponType, rarity: WEAPON_RARITIES[currentWeaponIndex] }));
+                lastShotTime = now;
+                
+                if (MAX_STACKS[currentWeaponType] || currentWeaponType === 'pistol') isMouseDown = false; 
+
+                if (MAX_STACKS[currentWeaponType]) {
+                    COUNTS[currentWeaponIndex]--;
+                    if (COUNTS[currentWeaponIndex] <= 0) {
+                        WEAPONS[currentWeaponIndex] = null;
+                        WEAPON_RARITIES[currentWeaponIndex] = null;
+                        currentWeaponIndex = 0;
+                    }
+                    syncInventory();
+                }
+            }
         }
     }
 }, 1000 / 60);
@@ -257,28 +318,69 @@ function drawWeaponIcon(ctx, type) {
     } else if (type === 'sniper') {
         ctx.fillStyle = '#27ae60'; ctx.fillRect(-15, -3, 20, 6); ctx.fillStyle = '#111'; ctx.fillRect(5, -1, 18, 3);      
         ctx.fillStyle = '#000'; ctx.fillRect(-5, -7, 12, 4);     
+    } else if (type === 'bandage') {
+        ctx.fillStyle = '#ecf0f1'; ctx.fillRect(-8, -6, 16, 12);
+        ctx.fillStyle = '#e74c3c'; ctx.fillRect(-2, -4, 4, 8); ctx.fillRect(-4, -2, 8, 4);
+    } else if (type === 'medkit') {
+        ctx.fillStyle = '#c0392b'; ctx.fillRect(-10, -8, 20, 16);
+        ctx.fillStyle = '#ecf0f1'; ctx.fillRect(-3, -5, 6, 10); ctx.fillRect(-5, -3, 10, 6);
+    } else if (type === 'mini') {
+        ctx.fillStyle = '#3498db'; ctx.beginPath(); ctx.arc(0, 2, 6, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#95a5a6'; ctx.fillRect(-3, -6, 6, 4);
+    } else if (type === 'big') {
+        ctx.fillStyle = '#2980b9'; ctx.beginPath(); ctx.arc(0, 2, 10, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#95a5a6'; ctx.fillRect(-4, -8, 8, 6);
     }
 }
 
-function drawItem(x, y, type, rarity) {
+function drawItem(x, y, type, rarity, count) {
     ctx.save(); ctx.translate(x, y);
     let glowColor = RARITY_COLORS[rarity] || '#FFF';
     ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 2);
     ctx.globalAlpha = 0.2; ctx.fillStyle = glowColor; ctx.fill();
     ctx.globalAlpha = 1.0; ctx.strokeStyle = glowColor; ctx.lineWidth = 2; ctx.stroke();
-    drawWeaponIcon(ctx, type); ctx.restore();
+    
+    drawWeaponIcon(ctx, type); 
+    
+    if (count > 1) {
+        ctx.fillStyle = '#FFF'; ctx.textAlign = 'center'; ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('x' + count, 0, 30);
+    }
+    
+    ctx.restore();
 }
 
 function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = null) {
     ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
-    if (weaponType && weaponType !== 'fists') {
+    
+    if (weaponType && weaponType !== 'fists' && !MAX_STACKS[weaponType]) {
         if (weaponType === 'pistol') { ctx.fillStyle = '#95a5a6'; ctx.fillRect(radius - 5, 2, 14, 4); } 
         else if (weaponType === 'ar') { ctx.fillStyle = '#34495e'; ctx.fillRect(radius - 5, 2, 24, 5); } 
         else if (weaponType === 'shotgun') { ctx.fillStyle = '#8b4513'; ctx.fillRect(radius - 5, 1, 10, 6); ctx.fillStyle = '#7f8c8d'; ctx.fillRect(radius + 5, 2, 16, 4); } 
         else if (weaponType === 'sniper') { ctx.fillStyle = '#27ae60'; ctx.fillRect(radius - 5, 2, 20, 6); ctx.fillStyle = '#111'; ctx.fillRect(radius + 15, 3, 18, 3); }
     }
+    
     ctx.fillStyle = colorMain; ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
-    if (weaponType === 'fists') {
+    
+    // --- UPDATED: Draw Consumables in hands ---
+    if (weaponType === 'fists' || MAX_STACKS[weaponType]) {
+        
+        if (MAX_STACKS[weaponType]) {
+            if (weaponType === 'bandage') {
+                ctx.fillStyle = '#ecf0f1'; ctx.fillRect(radius, -6, 12, 12);
+                ctx.fillStyle = '#e74c3c'; ctx.fillRect(radius + 4, -4, 4, 8); ctx.fillRect(radius + 2, -2, 8, 4);
+            } else if (weaponType === 'medkit') {
+                ctx.fillStyle = '#c0392b'; ctx.fillRect(radius - 2, -8, 16, 16);
+                ctx.fillStyle = '#ecf0f1'; ctx.fillRect(radius + 3, -5, 6, 10); ctx.fillRect(radius + 1, -3, 10, 6);
+            } else if (weaponType === 'mini') {
+                ctx.fillStyle = '#3498db'; ctx.beginPath(); ctx.arc(radius + 6, 0, 6, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#95a5a6'; ctx.fillRect(radius + 3, -6, 6, 4);
+            } else if (weaponType === 'big') {
+                ctx.fillStyle = '#2980b9'; ctx.beginPath(); ctx.arc(radius + 8, 0, 8, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#95a5a6'; ctx.fillRect(radius + 4, -8, 8, 6);
+            }
+        }
+
         ctx.fillStyle = colorMain;
         ctx.beginPath(); ctx.arc(radius * 0.6, -radius * 0.8, radius * 0.4, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
@@ -298,17 +400,13 @@ function drawFace(x, y, radius, angle, colorMain, colorSecondary, weaponType = n
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // If dead, we don't have myPlayer, so we can't track the camera perfectly.
-    // Instead, we just let it render whatever it saw last, or render the map at 0,0.
-    let camX = canvas.width / 2;
-    let camY = canvas.height / 2;
+    let camX = canvas.width / 2; let camY = canvas.height / 2;
     if (!isDead && currentState.players[myId]) {
         camX = canvas.width / 2 - currentState.players[myId].x;
         camY = canvas.height / 2 - currentState.players[myId].y;
     }
 
-    ctx.save();
-    ctx.translate(camX, camY);
+    ctx.save(); ctx.translate(camX, camY);
 
     ctx.fillStyle = '#4CAF50'; ctx.fillRect(0, 0, 2000, 2000); 
     ctx.strokeStyle = '#388E3C'; ctx.lineWidth = 2;
@@ -321,7 +419,7 @@ function draw() {
 
     if (currentState.items) {
         currentState.items.forEach(item => {
-            drawItem(item.x, item.y, item.type, item.rarity);
+            drawItem(item.x, item.y, item.type, item.rarity, item.count);
             if (!isDead && currentState.players[myId]) {
                 const dist = Math.hypot(currentState.players[myId].x - item.x, currentState.players[myId].y - item.y);
                 if (dist < 50) {
@@ -353,27 +451,17 @@ function draw() {
             drawColor = p.color.replace('hsl', 'hsla').replace(')', `, ${flickerAlpha})`);
         }
         drawFace(p.x, p.y, p.radius, p.aimAngle, drawColor, '#FFFFFF', p.currentWeapon);
+        
         if (id === myId) {
             ctx.lineWidth = 3; ctx.strokeStyle = '#FFF';
             ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 2, 0, Math.PI * 2); ctx.stroke();
         }
 
-        // --- NEW: DRAW PLAYER NAMES ---
         if (p.name) {
-            ctx.fillStyle = '#FFF';
-            ctx.font = 'bold 14px sans-serif';
-            ctx.textAlign = 'center';
-            // Draw a subtle shadow behind the text so it's readable over light colors
-            ctx.shadowColor = "black";
-            ctx.shadowBlur = 4;
-            ctx.shadowOffsetX = 1;
-            ctx.shadowOffsetY = 1;
+            ctx.fillStyle = '#FFF'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+            ctx.shadowColor = "black"; ctx.shadowBlur = 4; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 1;
             ctx.fillText(p.name, p.x, p.y - p.radius - 15);
-            // Reset shadows
-            ctx.shadowColor = "transparent";
-            ctx.shadowBlur = 0;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
+            ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
         }
     }
 
@@ -389,7 +477,6 @@ function draw() {
 
     ctx.restore(); 
 
-    // Don't draw the HUD if we are dead/in menu
     if (!isDead && currentState.players[myId]) {
         const myPlayer = currentState.players[myId];
         const hudX = 20; const hudY = canvas.height - 180; 
@@ -427,7 +514,14 @@ function draw() {
             }
 
             ctx.fillStyle = '#FFF'; ctx.textAlign = 'left'; ctx.fillText(i + 1, x + 5, itemsY + 12);
-            ctx.textAlign = 'center'; ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 3);
+            
+            if (COUNTS[i] > 1 || MAX_STACKS[slotWeapon]) {
+                ctx.textAlign = 'right'; ctx.font = 'bold 12px sans-serif';
+                ctx.fillText('x' + COUNTS[i], x + slotSize - 2, itemsY + slotSize - 2);
+            }
+
+            ctx.textAlign = 'center'; ctx.font = 'bold 10px sans-serif';
+            ctx.fillText(getWeaponName(slotWeapon), x + slotSize/2, itemsY + slotSize - 3);
         }
         
         if (isDragging && draggedSlot !== -1 && WEAPONS[draggedSlot]) {
