@@ -34,3 +34,4 @@ Reason: "Exited with status 1"
 30. ok how do i deploy this on github pages? i have two folders, backend and frontend
 31. add ammo and reloading, try to add a reasonable amount, every weapon spawns fully loaded, add ammo crates around the map that just give ammo of three types (can randomly be the same). every time you unbox a weapon, drop ammo for that type. Pistols: light, AR: medium, Shotgun: shotgun, Sniper: heavy
 32. ok this kind of broke some stuff and isnt working, how do i roll this back
+33. i noticed on github pages it lets me put a custom domain, could i do anything with that
